@@ -1,0 +1,135 @@
+{
+  "theme": {
+    "mode": "light",
+    "archetype": "1 (Organic & Earthy)",
+    "description": "Professional agro, clean, minimalist with strict corporate identity 'Aplicaciones Fitosanidad — AJVJ Hidropónicos'. Focuses on functionality, data clarity, and an elevated B2B agricultural aesthetic."
+  },
+  "colors": {
+    "background": {
+      "app": "#F5F5F0",
+      "sidebar": "#4B5828",
+      "header": "#FFFFFF",
+      "card": "#FFFFFF",
+      "card_accent": "#C8D4A0",
+      "table_alt_row": "#F5F5F0"
+    },
+    "text": {
+      "primary": "#1C1C1A",
+      "secondary": "#4B5828",
+      "muted": "#737373",
+      "on_dark": "#C8D4A0",
+      "on_primary": "#FFFFFF"
+    },
+    "brand": {
+      "primary": "#4B5828",
+      "accent": "#8FAD3C",
+      "cream": "#C8D4A0"
+    },
+    "alerts": {
+      "success": "#16a34a",
+      "warning": "#d97706",
+      "error": "#dc2626",
+      "success_bg": "#dcfce7",
+      "warning_bg": "#fef3c7",
+      "error_bg": "#fee2e2"
+    },
+    "borders": {
+      "default": "#e5e7eb",
+      "active": "#8FAD3C",
+      "dark": "#4B5828"
+    }
+  },
+  "typography": {
+    "families": {
+      "heading": "'Manrope', system-ui, sans-serif",
+      "body": "'Inter', system-ui, sans-serif",
+      "mono": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    },
+    "weights": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600
+    },
+    "sizing": {
+      "h1": "text-3xl sm:text-4xl tracking-tight font-semibold",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-semibold",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium",
+      "body": "text-sm sm:text-base leading-relaxed",
+      "small": "text-xs uppercase tracking-[0.05em] font-medium"
+    }
+  },
+  "layout": {
+    "spacing": {
+      "container_padding": "p-6 md:p-8",
+      "section_gap": "gap-8 md:gap-12",
+      "element_gap": "gap-4 md:gap-6"
+    },
+    "structure": {
+      "sidebar": "w-64 fixed left-0 top-0 h-full bg-[#4B5828] text-[#C8D4A0] hidden md:flex flex-col z-50",
+      "main_content": "md:ml-64 min-h-screen bg-[#F5F5F0] flex flex-col",
+      "header": "h-16 sticky top-0 bg-[#FFFFFF] border-b border-[#e5e7eb] flex items-center px-6 z-40"
+    },
+    "grid": {
+      "dashboard_bento": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6",
+      "forms": "grid grid-cols-1 md:grid-cols-2 gap-6"
+    },
+    "radius": {
+      "default": "rounded-[10px]",
+      "pill": "rounded-full"
+    },
+    "shadows": {
+      "card": "shadow-[0_2px_8px_-2px_rgba(28,28,26,0.08)]",
+      "dropdown": "shadow-[0_8px_24px_-4px_rgba(28,28,26,0.12)]"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#4B5828] text-[#FFFFFF] hover:bg-[#3d4720] transition-colors rounded-[10px] px-4 py-2 font-medium focus:ring-2 focus:ring-[#8FAD3C] focus:ring-offset-2",
+      "secondary": "bg-transparent text-[#4B5828] border border-[#8FAD3C] hover:bg-[#C8D4A0]/20 transition-colors rounded-[10px] px-4 py-2 font-medium"
+    },
+    "cards": {
+      "base": "bg-[#FFFFFF] rounded-[10px] shadow-[0_2px_8px_-2px_rgba(28,28,26,0.08)] border border-[#e5e7eb] overflow-hidden",
+      "header": "px-6 py-4 border-b border-[#e5e7eb]",
+      "body": "p-6"
+    },
+    "tables": {
+      "wrapper": "w-full overflow-auto bg-[#FFFFFF] rounded-[10px] border border-[#e5e7eb]",
+      "header": "bg-[#4B5828] text-[#C8D4A0] text-sm font-medium uppercase tracking-wider text-left",
+      "row": "border-b border-[#e5e7eb] last:border-0 even:bg-[#F5F5F0]/50 hover:bg-[#C8D4A0]/15 transition-colors",
+      "cell": "px-4 py-3 text-sm text-[#1C1C1A]"
+    },
+    "inputs": {
+      "base": "w-full border border-[#e5e7eb] rounded-[10px] px-3 py-2 bg-[#FFFFFF] text-[#1C1C1A] placeholder:text-[#737373] focus:outline-none focus:border-[#8FAD3C] focus:ring-1 focus:ring-[#8FAD3C] transition-all"
+    },
+    "badges": {
+      "base": "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
+      "success": "bg-[#dcfce7] text-[#16a34a]",
+      "warning": "bg-[#fef3c7] text-[#d97706]",
+      "error": "bg-[#fee2e2] text-[#dc2626]"
+    }
+  },
+  "media": {
+    "images": [
+      {
+        "url": "https://customer-assets.emergentagent.com/job_agroquim-control/artifacts/j54zw2ix_LOGOMesa%20de%20trabajo%201%20copia%2033.png",
+        "description": "AJVJ HIDROPÓNICOS corporate logo (olive green with greenhouse/plant icon). Note: Image has a black background originally, apply mix-blend-mode or place appropriately.",
+        "category": "logo"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1774291981971-ec2ec7a8cd0e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHwxfHxoeWRyb3BvbmljJTIwZ3JlZW5ob3VzZSUyMGludGVyaW9yfGVufDB8fHx8MTc3NzUxMzMyMXww&ixlib=rb-4.1.0&q=85",
+        "description": "Hydroponic greenhouse interior. High tech organic feel.",
+        "category": "login_background"
+      }
+    ],
+    "icons": "lucide-react"
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the provided color palette. Do NOT use default tailwind blues, purples, or teals. #4B5828 is the core anchor.",
+    "Data-TestIDs: ALL interactive elements (buttons, inputs, menu links) MUST include a data-testid attribute in kebab-case (e.g., data-testid='sidebar-dashboard-link').",
+    "Use Recharts for all 8 charts required in the Dashboard. Style the charts using the brand colors (#4B5828, #8FAD3C, #C8D4A0).",
+    "Use standard HTML/Tailwind for layouts. Use Shadcn components for complex interactions (Dialogs, Selects) and customize their borders and radii to match rounded-[10px] and brand focus colors.",
+    "Implement a fixed vertical sidebar for desktop (w-64) with #4B5828 background, and use a hamburger menu for mobile devices.",
+    "Ensure table rows have alternating backgrounds and a hover state to make data scanning easier for the technical team.",
+    "Forms must support autocomplete where requested and use clear success/error/warning badges for inventory states."
+  ]
+}
