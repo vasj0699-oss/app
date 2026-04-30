@@ -1,0 +1,44 @@
+{
+  "summary": "First iteration end-to-end test of AJVJ Fitosanidad. Created /app/backend/tests/backend_test.py with 16 pytest cases covering auth, users, config, modulos, productos, compras, bitacoras (with inventory deduction + reversal on delete), pedidos calcular + PDF, dashboard stats, inventario ajuste y permisos para rol monitor. Todos pasaron (16/16 = 100%). Frontend probado vía Playwright: login admin@ajvj.com/admin123 redirige a /dashboard, sidebar con los 8 ítems navega correctamente a Dashboard, Captura, Inventario, Compras, Pedidos, Historial, Configuración y Usuarios sin errores de consola ni de página. Dashboard renderiza KPIs y los 8 cards de gráficas. Compras muestra la compra creada en backend tests ($1000). Usuarios muestra admin + monitor sembrado por tests.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/productos/{id}", "issue": "No verifica si el producto está referenciado por compras o bitácoras; el inventario y movimientos referidos al producto siguen apuntando a un producto_id huérfano. Considera marcar como inactivo en lugar de borrar, o validar dependencias."},
+      {"endpoint": "DELETE /api/modulos/{id}", "issue": "No valida si el módulo tiene bitácoras asociadas; se queda con bitácoras apuntando a un modulo_id huérfano que afecta filtrados y dashboard."},
+      {"endpoint": "POST /api/bitacoras", "issue": "Permite valores negativos de inventario (descuenta sin importar stock). Idealmente debería validar stock o al menos retornar advertencia."},
+      {"endpoint": "@app.on_event startup/shutdown", "issue": "FastAPI deprecó @app.on_event a favor de lifespan handlers (warning DeprecationWarning). No bloquea pero debería migrarse."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Pedidos", "issues": ["Usa el date picker nativo del navegador (input type=date) en lugar del componente Calendar de shadcn. Para consistencia visual con el resto del diseño verde-cremoso AJVJ se recomienda usar el componente Calendar/DatePicker de shadcn."]},
+      {"screen": "Sidebar", "issues": ["El texto de los ítems no activos del sidebar (color claro sobre verde oscuro #4B5828) tiene contraste suficiente pero el texto 'APLICACIONES FITOSANIDAD' bajo el logo es muy tenue (verde claro sobre verde oscuro). Considerar aumentar opacidad."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(opcional) Migrar @app.on_event a lifespan handlers de FastAPI",
+    "(opcional) Validar dependencias en DELETE de productos y módulos para evitar referencias huérfanas",
+    "(opcional) Reemplazar input type=date nativo por componente Calendar de shadcn en Pedidos para consistencia visual",
+    "(opcional) Considerar validación de stock al crear bitácora para evitar inventario negativo"
+  ],
+  "critical_code_review_comments": [
+    "server.py es un archivo único de ~860 líneas. A medida que crezca conviene dividir por dominio (auth, modulos, productos, inventario, bitacoras, pedidos, dashboard) en routers separados.",
+    "PUT /api/productos no actualiza la unidad en inventario aunque el producto cambie de unidad_habitual; sólo actualiza el nombre. Revisar consistencia.",
+    "El cálculo de cantidad_usada_total se hace en el frontend (Captura.jsx) según la unidad de dosis. Esto debería validarse también en backend para evitar manipulación del cliente.",
+    "@app.on_event está deprecado en FastAPI; usar lifespan."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (8/8 páginas cargan sin errores)"},
+  "test_credentials": "admin@ajvj.com / admin123 (admin). TEST_monitor@ajvj.com / monitor123 (monitor) creado por los tests.",
+  "seed_data_creation": "Los tests crean: 1 usuario monitor TEST_monitor@ajvj.com, 1 módulo TEST_MOD_<timestamp>, 1 producto TEST_PROD_<timestamp> con compra de 10L y ajuste de inventario a 50. Cleanup elimina módulo y producto al finalizar la clase, pero la compra y movimientos quedan en BD (mejora menor para próximas iteraciones).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "El test suite /app/backend/tests/backend_test.py es reutilizable y cubre el flujo completo end-to-end (compra → bitácora descuenta inventario → pedido calcula necesito vs tengo → PDF binario %PDF → eliminar bitácora revierte inventario). El usuario monitor TEST_monitor@ajvj.com puede quedar entre runs (la fixture maneja el caso 400 de duplicado). El admin se siembra automáticamente al startup.",
+  "rca of the issue": "No se detectaron bugs críticos. Todos los flujos funcionales (auth, CRUD, inventario con doble entrada/salida, descuento automático, reversión, cálculo de pedido, PDF reportlab, dashboard KPIs, RBAC monitor 403) están funcionando correctamente."
+}
