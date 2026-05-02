@@ -13,18 +13,18 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr
 
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 # ---------- Setup ----------
 mongo_url = os.environ['MONGO_URL']
@@ -65,6 +65,24 @@ def now_iso() -> str:
 def new_id() -> str:
     return str(uuid.uuid4())
 
+def convertir_unidad(cantidad: float, desde: str, hacia: str) -> Optional[float]:
+    """Convierte cantidad entre unidades del mismo tipo. None si son incompatibles."""
+    if cantidad is None:
+        return 0
+    if desde == hacia:
+        return cantidad
+    # Volumen L <-> mL
+    if desde == "L" and hacia == "mL":
+        return cantidad * 1000
+    if desde == "mL" and hacia == "L":
+        return cantidad / 1000
+    # Masa kg <-> g
+    if desde == "kg" and hacia == "g":
+        return cantidad * 1000
+    if desde == "g" and hacia == "kg":
+        return cantidad / 1000
+    return None
+
 async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
     if creds is None or not creds.credentials:
         raise HTTPException(status_code=401, detail="No autenticado")
@@ -82,6 +100,11 @@ async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depen
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
     if user.get("rol") != "admin":
         raise HTTPException(status_code=403, detail="Se requiere rol admin")
+    return user
+
+def require_admin_or_jefe(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("rol") not in ("admin", "jefe"):
+        raise HTTPException(status_code=403, detail="Rol insuficiente")
     return user
 
 # ---------- Models ----------
@@ -111,12 +134,12 @@ class ConfigDoc(BaseModel):
     empresa: str = "AJVJ Hidropónicos"
     razon_social: str = "AJVJ Hidropónicos SPR DE RI DE CV"
     asesor: str = ""
-    jefe_produccion: str = ""
+    monitor: str = ""  # antes jefe_produccion
     objetivos: List[str] = []
     categorias_producto: List[str] = []
 
 class CicloIn(BaseModel):
-    numero: int  # 1 o 2
+    numero: int
     cultivo: str = ""
     variedad: str = ""
     num_plantas: float = 0
@@ -138,8 +161,8 @@ class ProductoIn(BaseModel):
     nombre: str
     categoria: str = ""
     dosis_habitual: float = 0
-    unidad_habitual: str = "L"
-    precio_unitario: float = 0
+    unidad_habitual: str = "L"  # unidad base del inventario / precio_unitario
+    precio_unitario: float = 0  # $ por unidad_habitual
     notas: str = ""
 
 class ProductoOut(ProductoIn):
@@ -149,8 +172,8 @@ class ProductoAplicado(BaseModel):
     producto_id: str
     nombre: str
     dosis: float
-    unidad: str  # mL/L, L/ha, mL/planta, L/planta, L
-    cantidad_usada_total: float  # in product base unit
+    unidad: str
+    cantidad_usada_total: float
     costo_linea: float
     precio_unitario: float = 0
 
@@ -161,7 +184,7 @@ class AplicacionIn(BaseModel):
     costo_total_aplicacion: float = 0
 
 class BitacoraIn(BaseModel):
-    fecha: str  # ISO date
+    fecha: str
     semana_inicio: Optional[str] = None
     tipo: Literal["semanal", "individual"] = "individual"
     modulo_id: str
@@ -177,18 +200,28 @@ class BitacoraOut(BitacoraIn):
     guardada_en: str
     creado_por: Optional[str] = None
 
-class CompraIn(BaseModel):
-    fecha: str
+class BitacoraBatchIn(BaseModel):
+    bitacoras: List[BitacoraIn]
+
+class CompraItemIn(BaseModel):
     producto_id: str
     nombre_producto: str
-    cantidad: float
-    unidad: str
-    precio_unitario: float
+    cantidad: float  # en la unidad capturada (CompraItemIn.unidad)
+    unidad: str  # unidad capturada (L, mL, kg, g)
+    precio_unitario: float  # precio por unidad_habitual del producto
+
+class CompraIn(BaseModel):
+    fecha: str
     proveedor: str = ""
     notas: str = ""
+    items: List[CompraItemIn]
 
-class CompraOut(CompraIn):
+class CompraOut(BaseModel):
     id: str
+    fecha: str
+    proveedor: str = ""
+    notas: str = ""
+    items: List[dict]
     precio_total: float
     creado_por: str
     creado_en: str
@@ -201,7 +234,7 @@ class AjusteInventarioIn(BaseModel):
 class PedidoQueryIn(BaseModel):
     fecha_inicio: str
     fecha_fin: str
-    modulo_ids: List[str] = []  # empty = todos
+    modulo_ids: List[str] = []
 
 # ---------- Auth Endpoints ----------
 @api.post("/auth/login", response_model=TokenOut)
@@ -255,6 +288,10 @@ async def get_config(_: dict = Depends(get_current_user)):
     cfg = await db.config.find_one({"id": "main"}, {"_id": 0, "id": 0})
     if not cfg:
         cfg = ConfigDoc().model_dump()
+    # Migración suave: si existe campo antiguo jefe_produccion, migrar a monitor
+    if "jefe_produccion" in cfg and not cfg.get("monitor"):
+        cfg["monitor"] = cfg.pop("jefe_produccion")
+    cfg.pop("jefe_produccion", None)
     return ConfigDoc(**cfg)
 
 @api.put("/config", response_model=ConfigDoc)
@@ -301,10 +338,14 @@ async def list_productos(_: dict = Depends(get_current_user)):
 
 @api.post("/productos", response_model=ProductoOut)
 async def create_producto(payload: ProductoIn, _: dict = Depends(require_admin)):
+    # Validar duplicado por nombre (case-insensitive)
+    existing = await db.productos.find_one({"nombre": {"$regex": f"^{payload.nombre.strip()}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Ya existe un producto con el nombre '{payload.nombre.strip()}'")
     doc = payload.model_dump()
+    doc["nombre"] = payload.nombre.strip()
     doc["id"] = new_id()
     await db.productos.insert_one(doc.copy())
-    # asegurar que existe inventario
     await db.inventario.update_one(
         {"producto_id": doc["id"]},
         {"$setOnInsert": {
@@ -318,12 +359,20 @@ async def create_producto(payload: ProductoIn, _: dict = Depends(require_admin))
 
 @api.put("/productos/{producto_id}", response_model=ProductoOut)
 async def update_producto(producto_id: str, payload: ProductoIn, _: dict = Depends(require_admin)):
+    # Validar duplicado en otro id
+    existing = await db.productos.find_one({
+        "nombre": {"$regex": f"^{payload.nombre.strip()}$", "$options": "i"},
+        "id": {"$ne": producto_id},
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Otro producto ya usa el nombre '{payload.nombre.strip()}'")
     doc = payload.model_dump()
+    doc["nombre"] = payload.nombre.strip()
     doc["id"] = producto_id
     res = await db.productos.update_one({"id": producto_id}, {"$set": doc})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
-    await db.inventario.update_one({"producto_id": producto_id}, {"$set": {"nombre": doc["nombre"]}})
+    await db.inventario.update_one({"producto_id": producto_id}, {"$set": {"nombre": doc["nombre"], "unidad": doc["unidad_habitual"]}})
     return ProductoOut(**doc)
 
 @api.delete("/productos/{producto_id}")
@@ -344,7 +393,8 @@ async def list_movimientos(producto_id: str, _: dict = Depends(get_current_user)
     return items
 
 @api.post("/inventario/ajuste")
-async def ajuste_manual(payload: AjusteInventarioIn, user: dict = Depends(require_admin)):
+async def ajuste_manual(payload: AjusteInventarioIn, user: dict = Depends(require_admin_or_jefe)):
+    """Admin y Jefe pueden ajustar. Si no es admin, se marca para revisión."""
     inv = await db.inventario.find_one({"producto_id": payload.producto_id}, {"_id": 0})
     if not inv:
         raise HTTPException(status_code=404, detail="Producto no encontrado en inventario")
@@ -364,10 +414,69 @@ async def ajuste_manual(payload: AjusteInventarioIn, user: dict = Depends(requir
         "justificacion": payload.justificacion,
         "fecha": now_iso(),
         "usuario": user["email"],
+        "rol_usuario": user.get("rol", "monitor"),
+        "revisado": user.get("rol") == "admin",  # admin: auto-revisado
+        "cantidad_anterior": inv["cantidad"],
+        "cantidad_nueva": payload.nueva_cantidad,
     })
-    return {"ok": True, "nueva_cantidad": payload.nueva_cantidad}
+    return {"ok": True, "nueva_cantidad": payload.nueva_cantidad, "requiere_revision": user.get("rol") != "admin"}
+
+@api.get("/inventario/ajustes/pendientes")
+async def ajustes_pendientes(_: dict = Depends(require_admin)):
+    items = await db.movimientos.find(
+        {"tipo": "ajuste", "revisado": False}, {"_id": 0}
+    ).sort("fecha", -1).to_list(200)
+    return items
+
+@api.post("/inventario/ajustes/{mov_id}/revisar")
+async def marcar_revisado(mov_id: str, _: dict = Depends(require_admin)):
+    await db.movimientos.update_one({"id": mov_id}, {"$set": {"revisado": True}})
+    return {"ok": True}
 
 # ---------- Compras ----------
+async def _aplicar_compra_item(item: dict, user_email: str, fecha: str, compra_id: str):
+    """Aplica un ítem de compra al inventario: convierte a unidad habitual y crea movimiento."""
+    prod = await db.productos.find_one({"id": item["producto_id"]}, {"_id": 0})
+    unidad_base = prod["unidad_habitual"] if prod else item["unidad"]
+    cantidad_convertida = convertir_unidad(item["cantidad"], item["unidad"], unidad_base)
+    if cantidad_convertida is None:
+        cantidad_convertida = item["cantidad"]  # fallback si unidades incompatibles
+        unidad_base = item["unidad"]
+    inv = await db.inventario.find_one({"producto_id": item["producto_id"]}, {"_id": 0})
+    if inv:
+        await db.inventario.update_one(
+            {"producto_id": item["producto_id"]},
+            {"$set": {"cantidad": inv["cantidad"] + cantidad_convertida, "unidad": unidad_base, "ultima_actualizacion": now_iso()}},
+        )
+    else:
+        await db.inventario.insert_one({
+            "producto_id": item["producto_id"],
+            "nombre": item["nombre_producto"],
+            "cantidad": cantidad_convertida,
+            "unidad": unidad_base,
+            "ultima_actualizacion": now_iso(),
+        })
+    await db.movimientos.insert_one({
+        "id": new_id(),
+        "tipo": "entrada",
+        "producto_id": item["producto_id"],
+        "nombre_producto": item["nombre_producto"],
+        "cantidad": cantidad_convertida,
+        "unidad": unidad_base,
+        "cantidad_original": item["cantidad"],
+        "unidad_original": item["unidad"],
+        "referencia": f"compra:{compra_id}",
+        "fecha": fecha,
+        "usuario": user_email,
+    })
+    # Actualizar precio del producto (precio por unidad habitual)
+    if prod:
+        await db.productos.update_one(
+            {"id": item["producto_id"]},
+            {"$set": {"precio_unitario": item["precio_unitario"]}},
+        )
+    return cantidad_convertida, unidad_base
+
 @api.get("/compras", response_model=List[CompraOut])
 async def list_compras(_: dict = Depends(get_current_user)):
     items = await db.compras.find({}, {"_id": 0}).sort("fecha", -1).to_list(2000)
@@ -375,44 +484,37 @@ async def list_compras(_: dict = Depends(get_current_user)):
 
 @api.post("/compras", response_model=CompraOut)
 async def create_compra(payload: CompraIn, user: dict = Depends(get_current_user)):
-    doc = payload.model_dump()
-    doc["id"] = new_id()
-    doc["precio_total"] = round(payload.cantidad * payload.precio_unitario, 4)
-    doc["creado_por"] = user["email"]
-    doc["creado_en"] = now_iso()
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Debe incluir al menos un producto")
+    compra_id = new_id()
+    items_out = []
+    precio_total = 0.0
+    for item in payload.items:
+        item_dict = item.model_dump()
+        # Calcular precio_total del item: cantidad convertida a unidad_habitual * precio_unitario
+        prod = await db.productos.find_one({"id": item.producto_id}, {"_id": 0})
+        unidad_base = prod["unidad_habitual"] if prod else item.unidad
+        cant_convertida = convertir_unidad(item.cantidad, item.unidad, unidad_base)
+        if cant_convertida is None:
+            cant_convertida = item.cantidad
+        item_dict["cantidad_convertida"] = round(cant_convertida, 4)
+        item_dict["unidad_base"] = unidad_base
+        item_dict["precio_total_item"] = round(cant_convertida * item.precio_unitario, 4)
+        precio_total += item_dict["precio_total_item"]
+        items_out.append(item_dict)
+        await _aplicar_compra_item(item.model_dump(), user["email"], payload.fecha, compra_id)
+
+    doc = {
+        "id": compra_id,
+        "fecha": payload.fecha,
+        "proveedor": payload.proveedor,
+        "notas": payload.notas,
+        "items": items_out,
+        "precio_total": round(precio_total, 2),
+        "creado_por": user["email"],
+        "creado_en": now_iso(),
+    }
     await db.compras.insert_one(doc.copy())
-    # Sumar al inventario
-    inv = await db.inventario.find_one({"producto_id": payload.producto_id}, {"_id": 0})
-    if inv:
-        nueva = inv["cantidad"] + payload.cantidad
-        await db.inventario.update_one(
-            {"producto_id": payload.producto_id},
-            {"$set": {"cantidad": nueva, "unidad": payload.unidad, "ultima_actualizacion": now_iso()}},
-        )
-    else:
-        await db.inventario.insert_one({
-            "producto_id": payload.producto_id,
-            "nombre": payload.nombre_producto,
-            "cantidad": payload.cantidad,
-            "unidad": payload.unidad,
-            "ultima_actualizacion": now_iso(),
-        })
-    await db.movimientos.insert_one({
-        "id": new_id(),
-        "tipo": "entrada",
-        "producto_id": payload.producto_id,
-        "nombre_producto": payload.nombre_producto,
-        "cantidad": payload.cantidad,
-        "unidad": payload.unidad,
-        "referencia": f"compra:{doc['id']}",
-        "fecha": doc["fecha"],
-        "usuario": user["email"],
-    })
-    # Actualiza precio del producto
-    await db.productos.update_one(
-        {"id": payload.producto_id},
-        {"$set": {"precio_unitario": payload.precio_unitario}},
-    )
     return CompraOut(**doc)
 
 @api.delete("/compras/{compra_id}")
@@ -420,18 +522,71 @@ async def delete_compra(compra_id: str, _: dict = Depends(require_admin)):
     compra = await db.compras.find_one({"id": compra_id}, {"_id": 0})
     if not compra:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
-    # revertir inventario
-    inv = await db.inventario.find_one({"producto_id": compra["producto_id"]}, {"_id": 0})
-    if inv:
-        await db.inventario.update_one(
-            {"producto_id": compra["producto_id"]},
-            {"$set": {"cantidad": inv["cantidad"] - compra["cantidad"], "ultima_actualizacion": now_iso()}},
-        )
+    # Revertir inventario por cada item
+    for item in compra.get("items", []):
+        pid = item["producto_id"]
+        cant = item.get("cantidad_convertida", item["cantidad"])
+        inv = await db.inventario.find_one({"producto_id": pid}, {"_id": 0})
+        if inv:
+            await db.inventario.update_one(
+                {"producto_id": pid},
+                {"$set": {"cantidad": inv["cantidad"] - cant, "ultima_actualizacion": now_iso()}},
+            )
     await db.movimientos.delete_many({"referencia": f"compra:{compra_id}"})
     await db.compras.delete_one({"id": compra_id})
     return {"ok": True}
 
 # ---------- Bitácoras ----------
+async def _crear_bitacora(payload: BitacoraIn, user_email: str) -> dict:
+    bit_id = new_id()
+    costo_total = 0.0
+    aplicaciones = []
+    for ap in payload.aplicaciones:
+        ap_total = 0.0
+        for p in ap.productos:
+            ap_total += p.costo_linea
+        ap_dict = ap.model_dump()
+        ap_dict["costo_total_aplicacion"] = round(ap_total, 4)
+        aplicaciones.append(ap_dict)
+        costo_total += ap_total
+    doc = payload.model_dump()
+    doc["id"] = bit_id
+    doc["aplicaciones"] = aplicaciones
+    doc["costo_total_bitacora"] = round(costo_total, 4)
+    doc["guardada_en"] = now_iso()
+    doc["creado_por"] = user_email
+    await db.bitacoras.insert_one(doc.copy())
+    # Descontar inventario
+    for ap in aplicaciones:
+        for p in ap["productos"]:
+            inv = await db.inventario.find_one({"producto_id": p["producto_id"]}, {"_id": 0})
+            cantidad = float(p["cantidad_usada_total"])
+            if inv:
+                await db.inventario.update_one(
+                    {"producto_id": p["producto_id"]},
+                    {"$set": {"cantidad": inv["cantidad"] - cantidad, "ultima_actualizacion": now_iso()}},
+                )
+            else:
+                await db.inventario.insert_one({
+                    "producto_id": p["producto_id"],
+                    "nombre": p["nombre"],
+                    "cantidad": -cantidad,
+                    "unidad": p["unidad"],
+                    "ultima_actualizacion": now_iso(),
+                })
+            await db.movimientos.insert_one({
+                "id": new_id(),
+                "tipo": "salida",
+                "producto_id": p["producto_id"],
+                "nombre_producto": p["nombre"],
+                "cantidad": cantidad,
+                "unidad": p["unidad"],
+                "referencia": f"bitacora:{bit_id}",
+                "fecha": doc["fecha"],
+                "usuario": user_email,
+            })
+    return doc
+
 @api.get("/bitacoras", response_model=List[BitacoraOut])
 async def list_bitacoras(
     modulo_id: Optional[str] = None,
@@ -457,76 +612,32 @@ async def list_bitacoras(
             q["fecha"]["$lte"] = fecha_fin
     items = await db.bitacoras.find(q, {"_id": 0}).sort("fecha", -1).to_list(2000)
     if cultivo:
-        # filtrar por cultivo del módulo+ciclo (post-fetch)
         modulos = {m["id"]: m for m in await db.modulos.find({}, {"_id": 0}).to_list(100)}
         filt = []
+        cultivo_norm = cultivo.strip().lower()
         for b in items:
             m = modulos.get(b["modulo_id"])
             if not m:
                 continue
             ciclo = next((c for c in m.get("ciclos", []) if c.get("numero") == b.get("ciclo_numero")), None)
-            if ciclo and (ciclo.get("cultivo", "").lower() == cultivo.lower()):
+            if ciclo and ciclo.get("cultivo", "").strip().lower() == cultivo_norm:
                 filt.append(b)
         items = filt
     return items
 
 @api.post("/bitacoras", response_model=BitacoraOut)
 async def create_bitacora(payload: BitacoraIn, user: dict = Depends(get_current_user)):
-    bit_id = new_id()
-    # calcular costo_total_bitacora
-    costo_total = 0.0
-    aplicaciones = []
-    for ap in payload.aplicaciones:
-        ap_total = 0.0
-        prods_out = []
-        for p in ap.productos:
-            ap_total += p.costo_linea
-            prods_out.append(p.model_dump())
-        ap_dict = ap.model_dump()
-        ap_dict["costo_total_aplicacion"] = round(ap_total, 4)
-        aplicaciones.append(ap_dict)
-        costo_total += ap_total
-
-    doc = payload.model_dump()
-    doc["id"] = bit_id
-    doc["aplicaciones"] = aplicaciones
-    doc["costo_total_bitacora"] = round(costo_total, 4)
-    doc["guardada_en"] = now_iso()
-    doc["creado_por"] = user["email"]
-
-    await db.bitacoras.insert_one(doc.copy())
-
-    # descuento de inventario por cada producto
-    for ap in aplicaciones:
-        for p in ap["productos"]:
-            inv = await db.inventario.find_one({"producto_id": p["producto_id"]}, {"_id": 0})
-            cantidad = float(p["cantidad_usada_total"])
-            if inv:
-                nueva = inv["cantidad"] - cantidad
-                await db.inventario.update_one(
-                    {"producto_id": p["producto_id"]},
-                    {"$set": {"cantidad": nueva, "ultima_actualizacion": now_iso()}},
-                )
-            else:
-                await db.inventario.insert_one({
-                    "producto_id": p["producto_id"],
-                    "nombre": p["nombre"],
-                    "cantidad": -cantidad,
-                    "unidad": p["unidad"],
-                    "ultima_actualizacion": now_iso(),
-                })
-            await db.movimientos.insert_one({
-                "id": new_id(),
-                "tipo": "salida",
-                "producto_id": p["producto_id"],
-                "nombre_producto": p["nombre"],
-                "cantidad": cantidad,
-                "unidad": p["unidad"],
-                "referencia": f"bitacora:{bit_id}",
-                "fecha": doc["fecha"],
-                "usuario": user["email"],
-            })
+    doc = await _crear_bitacora(payload, user["email"])
     return BitacoraOut(**doc)
+
+@api.post("/bitacoras/batch")
+async def create_bitacoras_batch(payload: BitacoraBatchIn, user: dict = Depends(get_current_user)):
+    """Crea múltiples bitácoras (p.ej. semanal 7 días × N módulos)."""
+    creadas = []
+    for b in payload.bitacoras:
+        doc = await _crear_bitacora(b, user["email"])
+        creadas.append({"id": doc["id"], "fecha": doc["fecha"], "modulo_id": doc["modulo_id"]})
+    return {"ok": True, "creadas": len(creadas), "bitacoras": creadas}
 
 @api.get("/bitacoras/{bit_id}", response_model=BitacoraOut)
 async def get_bitacora(bit_id: str, _: dict = Depends(get_current_user)):
@@ -540,7 +651,6 @@ async def delete_bitacora(bit_id: str, _: dict = Depends(require_admin)):
     b = await db.bitacoras.find_one({"id": bit_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Bitácora no encontrada")
-    # revertir inventario
     movs = await db.movimientos.find({"referencia": f"bitacora:{bit_id}"}, {"_id": 0}).to_list(2000)
     for m in movs:
         inv = await db.inventario.find_one({"producto_id": m["producto_id"]}, {"_id": 0})
@@ -560,7 +670,7 @@ async def _calcular_pedido(fecha_inicio: str, fecha_fin: str, modulo_ids: List[s
         q["modulo_id"] = {"$in": modulo_ids}
     bitacoras = await db.bitacoras.find(q, {"_id": 0}).to_list(5000)
 
-    requerido: dict = {}  # producto_id -> cantidad total requerida
+    requerido: dict = {}
     for b in bitacoras:
         for ap in b.get("aplicaciones", []):
             for p in ap.get("productos", []):
@@ -571,7 +681,6 @@ async def _calcular_pedido(fecha_inicio: str, fecha_fin: str, modulo_ids: List[s
                 })
                 requerido[pid]["necesito"] += float(p["cantidad_usada_total"])
 
-    # añadir productos del catálogo que no estén en bitácoras (con necesito=0) -> no incluir
     inventario = {i["producto_id"]: i for i in await db.inventario.find({}, {"_id": 0}).to_list(2000)}
     productos_cat = {p["id"]: p for p in await db.productos.find({}, {"_id": 0}).to_list(2000)}
 
@@ -579,19 +688,25 @@ async def _calcular_pedido(fecha_inicio: str, fecha_fin: str, modulo_ids: List[s
     for pid, r in requerido.items():
         inv = inventario.get(pid, {"cantidad": 0, "unidad": r["unidad"]})
         cat = productos_cat.get(pid, {})
-        diff = r["necesito"] - inv.get("cantidad", 0)
+        stock = inv.get("cantidad", 0) or 0
+        necesito = r["necesito"]
+        # Lógica: si stock >= necesito → a_pedir = 0
+        # Si stock < necesito → a_pedir = necesito - stock (valor absoluto de la resta cuando es negativa)
+        a_pedir = max(0, necesito - stock)
         precio = cat.get("precio_unitario", r.get("precio_unitario", 0)) or 0
+        # Unidad base para reportar "a pedir": unidad habitual del producto
+        unidad_reporte = cat.get("unidad_habitual", r["unidad"]) or r["unidad"]
         rows.append({
             "producto_id": pid,
             "nombre": r["nombre"],
             "categoria": cat.get("categoria", ""),
-            "unidad": r["unidad"],
-            "necesito": round(r["necesito"], 4),
-            "tengo": round(inv.get("cantidad", 0), 4),
-            "diferencia": round(diff, 4),
-            "cantidad_a_pedir": round(max(diff, 0), 4),
+            "unidad": unidad_reporte,
+            "necesito": round(necesito, 4),
+            "tengo": round(stock, 4),
+            "diferencia": round(necesito - stock, 4),
+            "cantidad_a_pedir": round(a_pedir, 4),
             "precio_unitario": precio,
-            "total_estimado": round(max(diff, 0) * precio, 2),
+            "total_estimado": round(a_pedir * precio, 2),
         })
     rows.sort(key=lambda x: (x["categoria"], x["nombre"]))
     return rows
@@ -603,18 +718,16 @@ async def calcular_pedido(payload: PedidoQueryIn, _: dict = Depends(get_current_
     return {"items": rows, "total_general": round(total, 2)}
 
 @api.post("/pedidos/pdf")
-async def pedido_pdf(payload: PedidoQueryIn, user: dict = Depends(get_current_user)):
+async def pedido_pdf(payload: PedidoQueryIn, _: dict = Depends(get_current_user)):
+    """PDF simplificado: Título, Periodo, Tabla (Producto, Unidad, A Pedir). Nada más."""
     rows = await _calcular_pedido(payload.fecha_inicio, payload.fecha_fin, payload.modulo_ids)
     rows = [r for r in rows if r["cantidad_a_pedir"] > 0]
-    cfg = await db.config.find_one({"id": "main"}, {"_id": 0, "id": 0}) or {}
-    modulos_q = await db.modulos.find({"id": {"$in": payload.modulo_ids}} if payload.modulo_ids else {}, {"_id": 0}).to_list(100)
-    modulos_str = ", ".join(m["nombre"] for m in modulos_q) if modulos_q else "Todos los módulos"
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=15 * mm, bottomMargin=15 * mm,
+        leftMargin=20 * mm, rightMargin=20 * mm,
+        topMargin=18 * mm, bottomMargin=18 * mm,
         title="Orden de Requerimiento AJVJ",
     )
     styles = getSampleStyleSheet()
@@ -622,93 +735,61 @@ async def pedido_pdf(payload: PedidoQueryIn, user: dict = Depends(get_current_us
     brand_accent = colors.HexColor("#8FAD3C")
     brand_cream = colors.HexColor("#C8D4A0")
 
-    title_style = ParagraphStyle("title", parent=styles["Title"], textColor=brand_dark, fontSize=18, alignment=0, spaceAfter=4)
-    subtitle_style = ParagraphStyle("sub", parent=styles["Normal"], textColor=brand_accent, fontSize=11, spaceAfter=2)
-    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=9, textColor=colors.black)
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#1C1C1A"))
     elements = []
 
-    # Header
-    header_data = [[
-        Paragraph(f'<font color="#4B5828"><b>AJVJ</b></font> <font color="#8FAD3C"><b>HIDROPÓNICOS</b></font>', ParagraphStyle("logo", fontSize=22, leading=24)),
-        Paragraph(f'<para align="right"><b>Orden de Requerimiento de Agroquímicos</b><br/>{cfg.get("razon_social","AJVJ Hidropónicos SPR DE RI DE CV")}<br/>Generado: {datetime.now().strftime("%d/%m/%Y %H:%M")}</para>', small),
-    ]]
-    header_tbl = Table(header_data, colWidths=[80 * mm, 100 * mm])
-    header_tbl.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LINEBELOW", (0, 0), (-1, -1), 2, brand_dark),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(header_tbl)
-    elements.append(Spacer(1, 8))
-    elements.append(Paragraph(f"<b>Período:</b> {payload.fecha_inicio} a {payload.fecha_fin}", small))
-    elements.append(Paragraph(f"<b>Módulos:</b> {modulos_str}", small))
-    elements.append(Spacer(1, 10))
+    # Logo textual simple arriba
+    elements.append(Paragraph(
+        '<font color="#4B5828" size="22"><b>AJVJ</b></font> <font color="#8FAD3C" size="16"><b>HIDROPÓNICOS</b></font>',
+        ParagraphStyle("logo", fontSize=22, leading=26)
+    ))
+    elements.append(Spacer(1, 4))
 
-    # Tabla
-    table_header = ["Producto", "Categoría", "Unidad", "Necesito", "Stock", "A pedir", "P. Unit.", "Total"]
+    # Título principal
+    elements.append(Paragraph(
+        '<font color="#4B5828" size="16"><b>Orden de Requerimiento de Agroquímicos</b></font>',
+        ParagraphStyle("title", fontSize=16, leading=20, spaceAfter=6)
+    ))
+    # Periodo
+    elements.append(Paragraph(
+        f'<b>Periodo:</b> {payload.fecha_inicio} al {payload.fecha_fin}',
+        small
+    ))
+    elements.append(Spacer(1, 14))
+
+    # Tabla simplificada: Producto | Unidad | A Pedir
+    table_header = ["Producto", "Unidad", "A Pedir"]
     table_data = [table_header]
-    cats_subtotal: dict = {}
-    total_general = 0.0
     for r in rows:
         table_data.append([
-            r["nombre"], r["categoria"] or "—", r["unidad"],
-            f'{r["necesito"]:.2f}', f'{r["tengo"]:.2f}', f'{r["cantidad_a_pedir"]:.2f}',
-            f'${r["precio_unitario"]:.2f}', f'${r["total_estimado"]:.2f}',
+            r["nombre"],
+            r["unidad"],
+            f'{r["cantidad_a_pedir"]:.2f}',
         ])
-        cats_subtotal.setdefault(r["categoria"] or "Sin categoría", 0.0)
-        cats_subtotal[r["categoria"] or "Sin categoría"] += r["total_estimado"]
-        total_general += r["total_estimado"]
 
     if len(table_data) == 1:
-        table_data.append(["Sin productos requeridos en el período", "", "", "", "", "", "", ""])
+        table_data.append(["No hay productos pendientes por pedir", "", ""])
 
-    tbl = Table(table_data, repeatRows=1, colWidths=[40 * mm, 28 * mm, 18 * mm, 18 * mm, 18 * mm, 18 * mm, 18 * mm, 22 * mm])
+    tbl = Table(table_data, repeatRows=1, colWidths=[105 * mm, 30 * mm, 30 * mm])
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), brand_dark),
         ("TEXTCOLOR", (0, 0), (-1, 0), brand_cream),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 10),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F5F0")]),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+        ("TOPPADDING", (0, 0), (-1, 0), 8),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
+        ("TOPPADDING", (0, 1), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, 0), 2, brand_accent),
     ]))
     elements.append(tbl)
-    elements.append(Spacer(1, 12))
-
-    # Subtotales por categoría
-    sub_data = [["Subtotales por categoría", ""]]
-    for cat, total in sorted(cats_subtotal.items()):
-        sub_data.append([cat, f"${total:.2f}"])
-    sub_data.append(["TOTAL GENERAL", f"${total_general:.2f}"])
-    sub_tbl = Table(sub_data, colWidths=[120 * mm, 40 * mm])
-    sub_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), brand_accent),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("BACKGROUND", (0, -1), (-1, -1), brand_dark),
-        ("TEXTCOLOR", (0, -1), (-1, -1), colors.white),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(sub_tbl)
-    elements.append(Spacer(1, 24))
-
-    # Firma
-    firma_data = [
-        ["Asesor:", cfg.get("asesor", "_______________________")],
-        ["Fecha:", datetime.now().strftime("%d/%m/%Y")],
-        ["Firma:", "_______________________"],
-    ]
-    firma_tbl = Table(firma_data, colWidths=[30 * mm, 100 * mm])
-    firma_tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9), ("TEXTCOLOR", (0, 0), (0, -1), brand_dark), ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")]))
-    elements.append(firma_tbl)
 
     doc.build(elements)
     buf.seek(0)
@@ -716,12 +797,18 @@ async def pedido_pdf(payload: PedidoQueryIn, user: dict = Depends(get_current_us
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 # ---------- Dashboard ----------
+def _norm_cultivo(s: str) -> str:
+    if not s:
+        return ""
+    t = s.strip().lower()
+    return t.capitalize()
+
 @api.get("/dashboard/stats")
 async def dashboard_stats(
     fecha_inicio: Optional[str] = None,
     fecha_fin: Optional[str] = None,
     ciclo_numero: Optional[int] = None,
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_admin),
 ):
     q: dict = {}
     if fecha_inicio or fecha_fin:
@@ -737,40 +824,37 @@ async def dashboard_stats(
     productos_cat = {p["id"]: p for p in await db.productos.find({}, {"_id": 0}).to_list(2000)}
     inventario = await db.inventario.find({}, {"_id": 0}).to_list(2000)
 
-    # 1. Costo por módulo
     costo_modulo: dict = {}
-    # 2. Costo por objetivo
     costo_obj: dict = {}
-    # 3. Costo por cultivo
-    costo_cultivo: dict = {}
-    # 4. Tipo (foliar/suelo/drench/riego)
+    costo_cultivo: dict = {}  # normalizado
+    costo_cultivo_variedad: dict = {}  # "Jitomate - Saladette"
     costo_tipo: dict = {"foliar": 0, "suelo": 0, "drench": 0, "riego": 0}
-    # 5. Gasto por mes
     costo_mes: dict = {}
-    # 6. Top productos por cantidad y costo
-    top_qty: dict = {}
     top_cost: dict = {}
-
     aplicaciones_count = 0
     total_gastado = 0.0
 
     for b in bitacoras:
         m = modulos.get(b["modulo_id"], {})
-        nombre_mod = m.get("nombre", "?")
+        nombre_mod = f'Módulo {m.get("nombre", "?")}'
         ciclo_obj = next((c for c in m.get("ciclos", []) if c.get("numero") == b.get("ciclo_numero")), None)
-        cultivo = (ciclo_obj.get("cultivo") if ciclo_obj else "Sin asignar") or "Sin asignar"
-        mes = (b.get("fecha") or "")[:7]  # YYYY-MM
+        cultivo_raw = ciclo_obj.get("cultivo") if ciclo_obj else ""
+        variedad_raw = ciclo_obj.get("variedad") if ciclo_obj else ""
+        cultivo_norm = _norm_cultivo(cultivo_raw) or "Sin asignar"
+        variedad = variedad_raw.strip() if variedad_raw else ""
+        key_variedad = f"{cultivo_norm}{(' - ' + variedad) if variedad else ''}"
+        mes = (b.get("fecha") or "")[:7]
         for ap in b.get("aplicaciones", []):
             aplicaciones_count += 1
             ap_total = ap.get("costo_total_aplicacion", 0)
             costo_modulo[nombre_mod] = costo_modulo.get(nombre_mod, 0) + ap_total
             costo_obj[ap.get("objetivo", "Sin objetivo")] = costo_obj.get(ap.get("objetivo", "Sin objetivo"), 0) + ap_total
-            costo_cultivo[cultivo] = costo_cultivo.get(cultivo, 0) + ap_total
+            costo_cultivo[cultivo_norm] = costo_cultivo.get(cultivo_norm, 0) + ap_total
+            costo_cultivo_variedad[key_variedad] = costo_cultivo_variedad.get(key_variedad, 0) + ap_total
             costo_tipo[ap.get("tipo", "foliar")] = costo_tipo.get(ap.get("tipo", "foliar"), 0) + ap_total
             costo_mes[mes] = costo_mes.get(mes, 0) + ap_total
             total_gastado += ap_total
             for p in ap.get("productos", []):
-                top_qty[p["nombre"]] = top_qty.get(p["nombre"], 0) + float(p.get("cantidad_usada_total", 0))
                 top_cost[p["nombre"]] = top_cost.get(p["nombre"], 0) + float(p.get("costo_linea", 0))
 
     valor_inventario = 0.0
@@ -791,8 +875,9 @@ async def dashboard_stats(
     def to_list(d):
         return [{"name": k, "value": round(v, 2)} for k, v in d.items()]
 
-    top10_qty = sorted(top_qty.items(), key=lambda x: x[1], reverse=True)[:10]
     top10_cost = sorted(top_cost.items(), key=lambda x: x[1], reverse=True)[:10]
+    # Ajustes pendientes (no revisados por admin)
+    ajustes_pend = await db.movimientos.count_documents({"tipo": "ajuste", "revisado": False})
 
     return {
         "kpis": {
@@ -800,13 +885,14 @@ async def dashboard_stats(
             "aplicaciones_registradas": aplicaciones_count,
             "productos_catalogo": len(productos_cat),
             "valor_inventario": round(valor_inventario, 2),
+            "ajustes_pendientes": ajustes_pend,
         },
         "costo_por_modulo": to_list(costo_modulo),
         "costo_por_objetivo": sorted(to_list(costo_obj), key=lambda x: x["value"], reverse=True),
         "costo_por_cultivo": to_list(costo_cultivo),
+        "costo_por_cultivo_variedad": to_list(costo_cultivo_variedad),
         "costo_por_tipo": to_list(costo_tipo),
         "costo_por_mes": sorted(to_list(costo_mes), key=lambda x: x["name"]),
-        "top_productos_cantidad": [{"name": k, "value": round(v, 2)} for k, v in top10_qty],
         "top_productos_costo": [{"name": k, "value": round(v, 2)} for k, v in top10_cost],
         "inventario_valorizado": inv_rows,
     }
@@ -848,13 +934,40 @@ async def startup():
             {"email": admin_email},
             {"$set": {"password_hash": hash_password(admin_password)}},
         )
-        logger.info(f"Admin password updated: {admin_email}")
+
+    # Migración: compras con formato antiguo (producto_id al top-level) → items[]
+    async for compra in db.compras.find({"items": {"$exists": False}, "producto_id": {"$exists": True}}):
+        new_items = [{
+            "producto_id": compra.get("producto_id"),
+            "nombre_producto": compra.get("nombre_producto", ""),
+            "cantidad": compra.get("cantidad", 0),
+            "unidad": compra.get("unidad", "L"),
+            "precio_unitario": compra.get("precio_unitario", 0),
+            "cantidad_convertida": compra.get("cantidad", 0),
+            "unidad_base": compra.get("unidad", "L"),
+            "precio_total_item": compra.get("precio_total", 0),
+        }]
+        await db.compras.update_one(
+            {"_id": compra["_id"]},
+            {
+                "$set": {"items": new_items, "precio_total": compra.get("precio_total", 0)},
+                "$unset": {"producto_id": "", "nombre_producto": "", "cantidad": "", "unidad": "", "precio_unitario": ""},
+            },
+        )
+        logger.info(f"Migrated compra {compra.get('id', '?')} to multi-item format")
+
+    # Migración: config jefe_produccion → monitor
+    cfg = await db.config.find_one({"id": "main"})
+    if cfg and "jefe_produccion" in cfg and not cfg.get("monitor"):
+        await db.config.update_one(
+            {"id": "main"},
+            {"$set": {"monitor": cfg["jefe_produccion"]}, "$unset": {"jefe_produccion": ""}},
+        )
 
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
 
-# Mount router
 app.include_router(api)
 
 app.add_middleware(

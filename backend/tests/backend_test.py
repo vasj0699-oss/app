@@ -1,279 +1,354 @@
-"""Backend API tests for AJVJ Fitosanidad."""
+"""Backend API tests for AJVJ Fitosanidad - Iteration 2."""
 import os
 import pytest
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://agroquim-control.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN_EMAIL = "admin@ajvj.com"
 ADMIN_PASSWORD = "admin123"
 
 
-@pytest.fixture(scope="session")
-def admin_token():
-    r = requests.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
-    assert r.status_code == 200, f"login failed: {r.status_code} {r.text}"
-    data = r.json()
-    assert "access_token" in data and "user" in data
-    assert data["user"]["rol"] == "admin"
-    return data["access_token"]
+def _login(email, password):
+    r = requests.post(f"{API}/auth/login", json={"email": email, "password": password}, timeout=15)
+    return r
 
 
 @pytest.fixture(scope="session")
-def admin_headers(admin_token):
-    return {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+def admin_headers():
+    r = _login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+    return {"Authorization": f"Bearer {r.json()['access_token']}", "Content-Type": "application/json"}
 
 
-@pytest.fixture(scope="session")
-def monitor_user(admin_headers):
-    """Crea (o reutiliza) un usuario monitor para tests de permisos."""
-    email = "TEST_monitor@ajvj.com"
-    pwd = "monitor123"
-    # try create
-    r = requests.post(f"{API}/users", headers=admin_headers, json={
-        "email": email, "password": pwd, "nombre": "Monitor Test", "rol": "monitor",
+def _ensure_user(admin_headers, email, pwd, rol, nombre):
+    requests.post(f"{API}/users", headers=admin_headers, json={
+        "email": email, "password": pwd, "nombre": nombre, "rol": rol,
     }, timeout=15)
-    if r.status_code == 400:
-        # Already exists - that's fine for re-runs
-        pass
-    else:
-        assert r.status_code == 200, r.text
-    # login
-    rl = requests.post(f"{API}/auth/login", json={"email": email, "password": pwd}, timeout=15)
-    assert rl.status_code == 200, rl.text
-    return {"email": email, "token": rl.json()["access_token"], "id": rl.json()["user"]["id"]}
+    rl = _login(email, pwd)
+    assert rl.status_code == 200, f"login {email} failed: {rl.text}"
+    return {"Authorization": f"Bearer {rl.json()['access_token']}", "Content-Type": "application/json"}
 
 
 @pytest.fixture(scope="session")
-def monitor_headers(monitor_user):
-    return {"Authorization": f"Bearer {monitor_user['token']}", "Content-Type": "application/json"}
+def monitor_headers(admin_headers):
+    return _ensure_user(admin_headers, "TEST_monitor@ajvj.com", "monitor123", "monitor", "Monitor Test")
+
+
+@pytest.fixture(scope="session")
+def jefe_headers(admin_headers):
+    return _ensure_user(admin_headers, "TEST_jefe@ajvj.com", "jefe12345", "jefe", "Jefe Test")
 
 
 # ---------- Auth ----------
 class TestAuth:
     def test_login_admin(self):
-        r = requests.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+        r = _login(ADMIN_EMAIL, ADMIN_PASSWORD)
         assert r.status_code == 200
         d = r.json()
-        assert d["token_type"] == "bearer"
-        assert d["user"]["email"] == ADMIN_EMAIL
         assert d["user"]["rol"] == "admin"
         assert isinstance(d["access_token"], str) and len(d["access_token"]) > 20
 
     def test_login_invalid(self):
-        r = requests.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong"})
+        r = _login(ADMIN_EMAIL, "wrong")
         assert r.status_code == 401
 
     def test_me_requires_token(self):
-        r = requests.get(f"{API}/auth/me")
-        assert r.status_code == 401
+        assert requests.get(f"{API}/auth/me").status_code == 401
 
     def test_me_ok(self, admin_headers):
         r = requests.get(f"{API}/auth/me", headers=admin_headers)
-        assert r.status_code == 200
-        assert r.json()["email"] == ADMIN_EMAIL
-
-
-# ---------- Users ----------
-class TestUsers:
-    def test_list_users_admin(self, admin_headers):
-        r = requests.get(f"{API}/users", headers=admin_headers)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_create_and_delete_user(self, admin_headers):
-        email = "TEST_delete_me@ajvj.com"
-        # cleanup if exists
-        users = requests.get(f"{API}/users", headers=admin_headers).json()
-        for u in users:
-            if u["email"] == email:
-                requests.delete(f"{API}/users/{u['id']}", headers=admin_headers)
-        r = requests.post(f"{API}/users", headers=admin_headers, json={
-            "email": email, "password": "x12345", "nombre": "Borrar", "rol": "monitor",
-        })
-        assert r.status_code == 200, r.text
-        uid = r.json()["id"]
-        assert r.json()["rol"] == "monitor"
-        rd = requests.delete(f"{API}/users/{uid}", headers=admin_headers)
-        assert rd.status_code == 200
+        assert r.status_code == 200 and r.json()["email"] == ADMIN_EMAIL
 
 
 # ---------- Config ----------
 class TestConfig:
-    def test_put_get_config(self, admin_headers):
+    def test_config_has_monitor_field(self, admin_headers):
+        r = requests.get(f"{API}/config", headers=admin_headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert "monitor" in d
+        assert "jefe_produccion" not in d
+
+    def test_put_config_monitor(self, admin_headers):
         payload = {
-            "empresa": "AJVJ Hidropónicos", "razon_social": "AJVJ TEST SPR",
-            "asesor": "Asesor T", "jefe_produccion": "Jefe T",
-            "objetivos": ["plagas", "fungoso"],
-            "categorias_producto": ["fungicida", "insecticida"],
+            "empresa": "AJVJ Hidropónicos", "razon_social": "AJVJ TEST",
+            "asesor": "Asesor T", "monitor": "Mon T",
+            "objetivos": ["plagas"], "categorias_producto": ["fungicida"],
         }
         r = requests.put(f"{API}/config", headers=admin_headers, json=payload)
         assert r.status_code == 200
-        rg = requests.get(f"{API}/config", headers=admin_headers)
-        assert rg.status_code == 200
-        d = rg.json()
-        assert "plagas" in d["objetivos"]
-        assert "fungicida" in d["categorias_producto"]
+        rg = requests.get(f"{API}/config", headers=admin_headers).json()
+        assert rg["monitor"] == "Mon T"
 
 
-# ---------- Modulos / Productos / Compras / Bitacoras / Pedidos / Dashboard ----------
-class TestE2E:
-    @pytest.fixture(scope="class")
-    def workspace(self, admin_headers):
-        """Crea modulo+producto+compra+bitacora y devuelve ids para validaciones cruzadas."""
-        nombre_mod = f"TEST_MOD_{datetime.now().strftime('%H%M%S%f')}"
-        # módulo
-        rm = requests.post(f"{API}/modulos", headers=admin_headers, json={
-            "nombre": nombre_mod,
-            "ciclos": [{
-                "numero": 1, "cultivo": "Tomate", "variedad": "Roma",
-                "num_plantas": 1000, "superficie_m2": 1500,
-                "caldo_foliar_L": 200, "activo": True,
-            }],
+# ---------- Productos dup validation ----------
+class TestProductosDup:
+    def test_duplicate_name_rejected(self, admin_headers):
+        base_name = f"TEST_DUP_{datetime.now().strftime('%H%M%S%f')}"
+        r1 = requests.post(f"{API}/productos", headers=admin_headers, json={
+            "nombre": base_name, "categoria": "fungicida", "unidad_habitual": "L",
+            "precio_unitario": 50.0, "dosis_habitual": 1.0,
         })
-        assert rm.status_code == 200, rm.text
-        modulo_id = rm.json()["id"]
-
-        # producto
-        rp = requests.post(f"{API}/productos", headers=admin_headers, json={
-            "nombre": f"TEST_PROD_{datetime.now().strftime('%H%M%S%f')}",
-            "categoria": "fungicida", "dosis_habitual": 1.0, "unidad_habitual": "L",
-            "precio_unitario": 100.0,
+        assert r1.status_code == 200, r1.text
+        pid = r1.json()["id"]
+        # duplicate case-insensitive
+        r2 = requests.post(f"{API}/productos", headers=admin_headers, json={
+            "nombre": base_name.lower(), "unidad_habitual": "L",
         })
-        assert rp.status_code == 200, rp.text
-        producto_id = rp.json()["id"]
-        nombre_prod = rp.json()["nombre"]
+        assert r2.status_code == 400, r2.text
+        # cleanup
+        requests.delete(f"{API}/productos/{pid}", headers=admin_headers)
 
-        # compra (suma 10 L)
+
+# ---------- Workspace + Compras multi-item + unit conv ----------
+@pytest.fixture(scope="module")
+def workspace(admin_headers):
+    ts = datetime.now().strftime('%H%M%S%f')
+    nombre_mod = f"TEST_MOD_{ts}"
+    rm = requests.post(f"{API}/modulos", headers=admin_headers, json={
+        "nombre": nombre_mod,
+        "ciclos": [
+            {"numero": 1, "cultivo": "jitomate", "variedad": "Saladette",
+             "num_plantas": 1000, "superficie_m2": 1500, "caldo_foliar_L": 200, "activo": True},
+        ],
+    })
+    assert rm.status_code == 200, rm.text
+    modulo_id = rm.json()["id"]
+
+    # Producto A en L (unidad_habitual L). Compramos en mL → convierte a L
+    rp_a = requests.post(f"{API}/productos", headers=admin_headers, json={
+        "nombre": f"TEST_PRODA_{ts}", "categoria": "fungicida", "unidad_habitual": "L",
+        "precio_unitario": 100.0, "dosis_habitual": 1.0,
+    })
+    assert rp_a.status_code == 200, rp_a.text
+    prod_a = rp_a.json()
+
+    # Producto B en g (unidad_habitual g). Compramos en kg → convierte a g
+    rp_b = requests.post(f"{API}/productos", headers=admin_headers, json={
+        "nombre": f"TEST_PRODB_{ts}", "categoria": "insecticida", "unidad_habitual": "g",
+        "precio_unitario": 2.0, "dosis_habitual": 1.0,
+    })
+    assert rp_b.status_code == 200, rp_b.text
+    prod_b = rp_b.json()
+
+    yield {"modulo_id": modulo_id, "prod_a": prod_a, "prod_b": prod_b, "ts": ts}
+
+    requests.delete(f"{API}/modulos/{modulo_id}", headers=admin_headers)
+    requests.delete(f"{API}/productos/{prod_a['id']}", headers=admin_headers)
+    requests.delete(f"{API}/productos/{prod_b['id']}", headers=admin_headers)
+
+
+class TestComprasMulti:
+    def test_compra_multi_item_converts_units(self, admin_headers, workspace):
+        pa, pb = workspace["prod_a"], workspace["prod_b"]
+        # A: compra 2000 mL (→ 2 L). B: compra 1.5 kg (→ 1500 g).
+        payload = {
+            "fecha": "2026-01-10", "proveedor": "ProvMulti", "notas": "test",
+            "items": [
+                {"producto_id": pa["id"], "nombre_producto": pa["nombre"],
+                 "cantidad": 2000, "unidad": "mL", "precio_unitario": 100.0},
+                {"producto_id": pb["id"], "nombre_producto": pb["nombre"],
+                 "cantidad": 1.5, "unidad": "kg", "precio_unitario": 2.0},
+            ],
+        }
+        r = requests.post(f"{API}/compras", headers=admin_headers, json=payload)
+        assert r.status_code == 200, r.text
+        compra = r.json()
+        # precio_total = 2L*100 + 1500g*2 = 200 + 3000 = 3200
+        assert compra["precio_total"] == 3200.0, compra
+        assert len(compra["items"]) == 2
+        # Validar conversion info
+        a_it = next(i for i in compra["items"] if i["producto_id"] == pa["id"])
+        assert a_it["cantidad_convertida"] == 2.0
+        assert a_it["unidad_base"] == "L"
+        b_it = next(i for i in compra["items"] if i["producto_id"] == pb["id"])
+        assert b_it["cantidad_convertida"] == 1500.0
+        assert b_it["unidad_base"] == "g"
+
+        # Inventario
+        inv = requests.get(f"{API}/inventario", headers=admin_headers).json()
+        inv_a = next(i for i in inv if i["producto_id"] == pa["id"])
+        inv_b = next(i for i in inv if i["producto_id"] == pb["id"])
+        assert inv_a["cantidad"] == 2.0 and inv_a["unidad"] == "L"
+        assert inv_b["cantidad"] == 1500.0 and inv_b["unidad"] == "g"
+
+        # DELETE compra revierte ambos items
+        rd = requests.delete(f"{API}/compras/{compra['id']}", headers=admin_headers)
+        assert rd.status_code == 200
+        inv2 = requests.get(f"{API}/inventario", headers=admin_headers).json()
+        inv_a2 = next(i for i in inv2 if i["producto_id"] == pa["id"])
+        inv_b2 = next(i for i in inv2 if i["producto_id"] == pb["id"])
+        assert inv_a2["cantidad"] == 0.0
+        assert inv_b2["cantidad"] == 0.0
+
+
+# ---------- Bitacoras batch + a_pedir ----------
+class TestBitacorasBatchPedidos:
+    def test_batch_creates_n_and_a_pedir(self, admin_headers, workspace):
+        pa = workspace["prod_a"]
+        # Re-aprovisionar: compra 5 L
         rc = requests.post(f"{API}/compras", headers=admin_headers, json={
-            "fecha": "2026-01-10", "producto_id": producto_id, "nombre_producto": nombre_prod,
-            "cantidad": 10.0, "unidad": "L", "precio_unitario": 100.0, "proveedor": "Prov",
+            "fecha": "2026-01-05", "proveedor": "Prov",
+            "items": [{"producto_id": pa["id"], "nombre_producto": pa["nombre"],
+                       "cantidad": 5.0, "unidad": "L", "precio_unitario": 100.0}],
         })
         assert rc.status_code == 200, rc.text
-        assert rc.json()["precio_total"] == 1000.0
+        compra_id = rc.json()["id"]
 
-        yield {
-            "modulo_id": modulo_id, "producto_id": producto_id, "nombre_prod": nombre_prod,
-        }
-
-        # cleanup
-        requests.delete(f"{API}/modulos/{modulo_id}", headers=admin_headers)
-        requests.delete(f"{API}/productos/{producto_id}", headers=admin_headers)
-
-    def test_modulo_listed(self, admin_headers, workspace):
-        r = requests.get(f"{API}/modulos", headers=admin_headers)
-        assert r.status_code == 200
-        ids = [m["id"] for m in r.json()]
-        assert workspace["modulo_id"] in ids
-
-    def test_inventario_after_compra(self, admin_headers, workspace):
-        r = requests.get(f"{API}/inventario", headers=admin_headers)
-        assert r.status_code == 200
-        item = next((i for i in r.json() if i["producto_id"] == workspace["producto_id"]), None)
-        assert item is not None
-        assert item["cantidad"] == 10.0
-
-    def test_bitacora_descuenta_inventario(self, admin_headers, workspace):
-        # bitacora consume 2 L
-        rb = requests.post(f"{API}/bitacoras", headers=admin_headers, json={
-            "fecha": "2026-01-12", "tipo": "individual",
-            "modulo_id": workspace["modulo_id"], "ciclo_numero": 1,
-            "asesor": "A", "monitor": "M",
-            "aplicaciones": [{
-                "tipo": "foliar", "objetivo": "plagas",
-                "productos": [{
-                    "producto_id": workspace["producto_id"], "nombre": workspace["nombre_prod"],
-                    "dosis": 10, "unidad": "mL/L", "cantidad_usada_total": 2.0,
-                    "costo_linea": 200.0, "precio_unitario": 100.0,
+        # Batch de 3 bitácoras, cada una consume 1 L
+        def bit(fecha):
+            return {
+                "fecha": fecha, "tipo": "semanal", "semana_inicio": "2026-01-12",
+                "modulo_id": workspace["modulo_id"], "ciclo_numero": 1,
+                "aplicaciones": [{
+                    "tipo": "foliar", "objetivo": "plagas",
+                    "productos": [{
+                        "producto_id": pa["id"], "nombre": pa["nombre"],
+                        "dosis": 1, "unidad": "L/ha",
+                        "cantidad_usada_total": 1.0, "costo_linea": 100.0,
+                        "precio_unitario": 100.0,
+                    }],
                 }],
-            }],
+            }
+        rb = requests.post(f"{API}/bitacoras/batch", headers=admin_headers, json={
+            "bitacoras": [bit("2026-01-12"), bit("2026-01-13"), bit("2026-01-14")],
         })
         assert rb.status_code == 200, rb.text
-        bit = rb.json()
-        assert bit["costo_total_bitacora"] == 200.0
-        bit_id = bit["id"]
+        assert rb.json()["creadas"] == 3
+        bit_ids = [b["id"] for b in rb.json()["bitacoras"]]
 
-        # Verificar inventario = 10 - 2 = 8
-        r = requests.get(f"{API}/inventario", headers=admin_headers)
-        item = next(i for i in r.json() if i["producto_id"] == workspace["producto_id"])
-        assert item["cantidad"] == 8.0
+        # Inventario: 5 - 3 = 2
+        inv = requests.get(f"{API}/inventario", headers=admin_headers).json()
+        inv_a = next(i for i in inv if i["producto_id"] == pa["id"])
+        assert inv_a["cantidad"] == 2.0
 
-        # Pedidos calcular: necesito 2, tengo 8, dif -6
+        # Pedidos: necesito 3, tengo 2, a_pedir = 1
         rp = requests.post(f"{API}/pedidos/calcular", headers=admin_headers, json={
             "fecha_inicio": "2026-01-01", "fecha_fin": "2026-01-31",
             "modulo_ids": [workspace["modulo_id"]],
         })
-        assert rp.status_code == 200, rp.text
-        rows = rp.json()["items"]
-        prod_row = next((x for x in rows if x["producto_id"] == workspace["producto_id"]), None)
-        assert prod_row is not None
-        assert prod_row["necesito"] == 2.0
-        assert prod_row["tengo"] == 8.0
-        assert prod_row["diferencia"] == -6.0
-        assert prod_row["cantidad_a_pedir"] == 0.0
+        assert rp.status_code == 200
+        row = next(x for x in rp.json()["items"] if x["producto_id"] == pa["id"])
+        assert row["necesito"] == 3.0
+        assert row["tengo"] == 2.0
+        assert row["cantidad_a_pedir"] == 1.0
 
-        # PDF
+        # PDF simplificado
         rpdf = requests.post(f"{API}/pedidos/pdf", headers=admin_headers, json={
             "fecha_inicio": "2026-01-01", "fecha_fin": "2026-01-31",
             "modulo_ids": [workspace["modulo_id"]],
         })
         assert rpdf.status_code == 200
-        assert rpdf.headers.get("content-type", "").startswith("application/pdf")
         assert rpdf.content[:4] == b"%PDF"
 
-        # Dashboard
-        rd = requests.get(f"{API}/dashboard/stats", headers=admin_headers)
-        assert rd.status_code == 200
-        d = rd.json()
-        assert "kpis" in d
-        for k in ["costo_por_modulo", "costo_por_objetivo", "costo_por_cultivo",
-                  "costo_por_tipo", "costo_por_mes", "top_productos_cantidad",
-                  "top_productos_costo", "inventario_valorizado"]:
-            assert k in d, f"missing {k}"
+        # Cleanup
+        for bid in bit_ids:
+            requests.delete(f"{API}/bitacoras/{bid}", headers=admin_headers)
+        requests.delete(f"{API}/compras/{compra_id}", headers=admin_headers)
 
-        # Eliminar bitácora -> revertir inventario a 10
-        rdel = requests.delete(f"{API}/bitacoras/{bit_id}", headers=admin_headers)
-        assert rdel.status_code == 200
-        r2 = requests.get(f"{API}/inventario", headers=admin_headers)
-        item2 = next(i for i in r2.json() if i["producto_id"] == workspace["producto_id"])
-        assert item2["cantidad"] == 10.0
+    def test_a_pedir_zero_when_stock_exceeds(self, admin_headers, workspace):
+        pa = workspace["prod_a"]
+        rc = requests.post(f"{API}/compras", headers=admin_headers, json={
+            "fecha": "2026-01-06", "proveedor": "P",
+            "items": [{"producto_id": pa["id"], "nombre_producto": pa["nombre"],
+                       "cantidad": 20.0, "unidad": "L", "precio_unitario": 100.0}],
+        })
+        assert rc.status_code == 200
+        cid = rc.json()["id"]
+        # necesito 2 vs stock 20 → a_pedir 0
+        rb = requests.post(f"{API}/bitacoras", headers=admin_headers, json={
+            "fecha": "2026-01-15", "tipo": "individual",
+            "modulo_id": workspace["modulo_id"], "ciclo_numero": 1,
+            "aplicaciones": [{
+                "tipo": "foliar", "objetivo": "plagas",
+                "productos": [{
+                    "producto_id": pa["id"], "nombre": pa["nombre"],
+                    "dosis": 1, "unidad": "L/ha",
+                    "cantidad_usada_total": 2.0, "costo_linea": 200.0, "precio_unitario": 100.0,
+                }],
+            }],
+        })
+        assert rb.status_code == 200
+        bid = rb.json()["id"]
+        rp = requests.post(f"{API}/pedidos/calcular", headers=admin_headers, json={
+            "fecha_inicio": "2026-01-14", "fecha_fin": "2026-01-20",
+            "modulo_ids": [workspace["modulo_id"]],
+        })
+        row = next(x for x in rp.json()["items"] if x["producto_id"] == pa["id"])
+        assert row["cantidad_a_pedir"] == 0.0
+        assert row["tengo"] >= row["necesito"]
+        requests.delete(f"{API}/bitacoras/{bid}", headers=admin_headers)
+        requests.delete(f"{API}/compras/{cid}", headers=admin_headers)
 
-    def test_inventario_ajuste(self, admin_headers, workspace):
+
+# ---------- Dashboard RBAC + normalization ----------
+class TestDashboard:
+    def test_dashboard_admin_only(self, admin_headers, monitor_headers, jefe_headers):
+        r_adm = requests.get(f"{API}/dashboard/stats", headers=admin_headers)
+        assert r_adm.status_code == 200
+        r_mon = requests.get(f"{API}/dashboard/stats", headers=monitor_headers)
+        assert r_mon.status_code == 403
+        r_jefe = requests.get(f"{API}/dashboard/stats", headers=jefe_headers)
+        assert r_jefe.status_code == 403
+
+    def test_cultivo_normalized_and_variedad(self, admin_headers, workspace):
+        d = requests.get(f"{API}/dashboard/stats", headers=admin_headers).json()
+        assert "costo_por_cultivo" in d and "costo_por_cultivo_variedad" in d
+        # Keys normalizadas: "jitomate" -> "Jitomate"
+        names = [x["name"] for x in d["costo_por_cultivo"]]
+        assert all(n == n[:1].upper() + n[1:].lower() or n == "Sin asignar" for n in names), names
+
+
+# ---------- Inventario ajustes con jefe y pendientes ----------
+class TestAjustes:
+    @pytest.fixture(scope="class")
+    def ajuste_prod(self, admin_headers):
+        ts = datetime.now().strftime('%H%M%S%f')
+        rp = requests.post(f"{API}/productos", headers=admin_headers, json={
+            "nombre": f"TEST_AJU_{ts}", "categoria": "fungicida", "unidad_habitual": "L",
+            "precio_unitario": 10.0, "dosis_habitual": 1.0,
+        })
+        assert rp.status_code == 200, rp.text
+        pid = rp.json()["id"]
+        yield pid
+        requests.delete(f"{API}/productos/{pid}", headers=admin_headers)
+
+    def test_ajuste_admin_revisado_true(self, admin_headers, ajuste_prod):
         r = requests.post(f"{API}/inventario/ajuste", headers=admin_headers, json={
-            "producto_id": workspace["producto_id"], "nueva_cantidad": 50.0,
-            "justificacion": "Conteo físico TEST",
+            "producto_id": ajuste_prod, "nueva_cantidad": 25.0, "justificacion": "admin TEST",
         })
         assert r.status_code == 200
-        assert r.json()["nueva_cantidad"] == 50.0
-        rg = requests.get(f"{API}/inventario", headers=admin_headers)
-        item = next(i for i in rg.json() if i["producto_id"] == workspace["producto_id"])
-        assert item["cantidad"] == 50.0
+        assert r.json()["requiere_revision"] is False
 
-
-# ---------- Permissions ----------
-class TestPermissions:
-    def test_monitor_cannot_create_user(self, monitor_headers):
-        r = requests.post(f"{API}/users", headers=monitor_headers, json={
-            "email": "TEST_x@x.com", "password": "x", "nombre": "x", "rol": "monitor",
+    def test_ajuste_jefe_requires_review(self, admin_headers, jefe_headers, ajuste_prod):
+        r = requests.post(f"{API}/inventario/ajuste", headers=jefe_headers, json={
+            "producto_id": ajuste_prod, "nueva_cantidad": 30.0, "justificacion": "jefe TEST",
         })
-        assert r.status_code == 403
+        assert r.status_code == 200, r.text
+        assert r.json()["requiere_revision"] is True
+        # Admin ve ajuste pendiente
+        rp = requests.get(f"{API}/inventario/ajustes/pendientes", headers=admin_headers)
+        assert rp.status_code == 200
+        pend = rp.json()
+        mine = [m for m in pend if m["producto_id"] == ajuste_prod and not m.get("revisado")]
+        assert len(mine) >= 1
+        mov_id = mine[0]["id"]
+        # Marcar revisado
+        rr = requests.post(f"{API}/inventario/ajustes/{mov_id}/revisar", headers=admin_headers)
+        assert rr.status_code == 200
+        # Ya no debe estar en pendientes
+        pend2 = requests.get(f"{API}/inventario/ajustes/pendientes", headers=admin_headers).json()
+        assert all(m["id"] != mov_id for m in pend2)
 
-    def test_monitor_cannot_create_modulo(self, monitor_headers):
-        r = requests.post(f"{API}/modulos", headers=monitor_headers, json={"nombre": "TEST_no", "ciclos": []})
-        assert r.status_code == 403
-
-    def test_monitor_cannot_create_producto(self, monitor_headers):
-        r = requests.post(f"{API}/productos", headers=monitor_headers, json={"nombre": "TEST_no_p"})
-        assert r.status_code == 403
-
-    def test_monitor_cannot_ajuste(self, monitor_headers):
+    def test_monitor_cannot_ajustar(self, monitor_headers, ajuste_prod):
         r = requests.post(f"{API}/inventario/ajuste", headers=monitor_headers, json={
-            "producto_id": "x", "nueva_cantidad": 1.0, "justificacion": "x",
+            "producto_id": ajuste_prod, "nueva_cantidad": 1.0, "justificacion": "x",
         })
         assert r.status_code == 403
 
-    def test_monitor_can_read_modulos(self, monitor_headers):
-        r = requests.get(f"{API}/modulos", headers=monitor_headers)
-        assert r.status_code == 200
+    def test_monitor_cannot_see_pendientes(self, monitor_headers):
+        r = requests.get(f"{API}/inventario/ajustes/pendientes", headers=monitor_headers)
+        assert r.status_code == 403

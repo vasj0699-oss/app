@@ -6,7 +6,9 @@ import { ChevronDown, ChevronUp, Edit3 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Inventario = () => {
-    const { isAdmin } = useAuth();
+    const { user } = useAuth();
+    // Admin y Jefe pueden ajustar (Jefe queda como "pendiente de revisión")
+    const canAdjust = user?.rol === "admin" || user?.rol === "jefe";
     const [items, setItems] = useState([]);
     const [open, setOpen] = useState({});
     const [movs, setMovs] = useState({});
@@ -27,7 +29,7 @@ const Inventario = () => {
     const toggle = async (pid) => {
         const next = { ...open, [pid]: !open[pid] };
         setOpen(next);
-        if (next[pid] && !movs[pid]) {
+        if (next[pid]) {
             try {
                 const r = await api.get(`/inventario/${pid}/movimientos`);
                 setMovs((m) => ({ ...m, [pid]: r.data }));
@@ -37,8 +39,9 @@ const Inventario = () => {
 
     const submitAjuste = async () => {
         try {
-            await api.post("/inventario/ajuste", { producto_id: adjustOpen.producto_id, nueva_cantidad: parseFloat(newQty), justificacion: justif });
-            toast.success("Ajuste aplicado");
+            const r = await api.post("/inventario/ajuste", { producto_id: adjustOpen.producto_id, nueva_cantidad: parseFloat(newQty), justificacion: justif });
+            if (r.data.requiere_revision) toast.info("Ajuste aplicado. Queda pendiente de revisión por el administrador.");
+            else toast.success("Ajuste aplicado");
             setAdjustOpen(null); setJustif(""); setNewQty(0);
             reload();
         } catch (e) { toast.error(formatApiError(e)); }
@@ -56,7 +59,7 @@ const Inventario = () => {
                             <th className="px-4 py-3 text-left font-medium">Unidad</th>
                             <th className="px-4 py-3 text-left font-medium">Estado</th>
                             <th className="px-4 py-3 text-left font-medium">Última actualización</th>
-                            {isAdmin && <th className="px-4 py-3 text-right font-medium">Ajuste</th>}
+                            {canAdjust && <th className="px-4 py-3 text-right font-medium">Ajuste</th>}
                         </tr>
                     </thead>
                     <tbody>
@@ -82,7 +85,7 @@ const Inventario = () => {
                                                     <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">OK</span>}
                                         </td>
                                         <td className="px-4 py-2.5 text-neutral-600 text-xs">{it.ultima_actualizacion?.slice(0, 16).replace("T", " ")}</td>
-                                        {isAdmin && (
+                                        {canAdjust && (
                                             <td className="px-4 py-2.5 text-right">
                                                 <button onClick={() => { setAdjustOpen(it); setNewQty(it.cantidad); }} data-testid={`adjust-${it.producto_id}`} className="text-[#4B5828] hover:bg-[#C8D4A0]/40 p-1.5 rounded inline-flex items-center gap-1 text-xs">
                                                     <Edit3 className="w-3.5 h-3.5" />Ajustar
@@ -110,8 +113,8 @@ const Inventario = () => {
                                                         {movs[it.producto_id]?.map((m) => (
                                                             <tr key={m.id} className="border-b last:border-0">
                                                                 <td className="px-3 py-1.5">{m.fecha?.slice(0, 10)}</td>
-                                                                <td className="px-3 py-1.5"><span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${m.tipo === "entrada" ? "bg-green-100 text-green-700" : m.tipo === "salida" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{m.tipo}</span></td>
-                                                                <td className={`px-3 py-1.5 text-right font-semibold ${m.tipo === "salida" ? "text-red-600" : "text-green-700"}`}>{m.tipo === "salida" ? "-" : "+"}{m.cantidad.toFixed(2)} {m.unidad}</td>
+                                                                <td className="px-3 py-1.5"><span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${m.tipo === "entrada" ? "bg-green-100 text-green-700" : m.tipo === "salida" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{m.tipo}{m.tipo === "ajuste" && m.revisado === false ? " · pendiente" : ""}</span></td>
+                                                                <td className={`px-3 py-1.5 text-right font-semibold ${m.tipo === "salida" ? "text-red-600" : m.tipo === "ajuste" ? (m.cantidad < 0 ? "text-red-600" : "text-green-700") : "text-green-700"}`}>{m.tipo === "salida" ? "-" : m.cantidad > 0 ? "+" : ""}{m.cantidad.toFixed(2)} {m.unidad}</td>
                                                                 <td className="px-3 py-1.5 text-neutral-600">{m.referencia}</td>
                                                                 <td className="px-3 py-1.5 text-neutral-600">{m.usuario}</td>
                                                             </tr>
@@ -132,6 +135,11 @@ const Inventario = () => {
                 <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setAdjustOpen(null)}>
                     <div className="bg-white rounded-[10px] p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
                         <h3 className="font-heading font-semibold text-lg mb-4">Ajuste manual: {adjustOpen.nombre}</h3>
+                        {user?.rol === "jefe" && (
+                            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-[10px] p-2 mb-3">
+                                Tu ajuste quedará registrado como <b>pendiente de revisión</b> por el administrador.
+                            </div>
+                        )}
                         <div className="space-y-3">
                             <div>
                                 <label className="text-xs font-medium text-neutral-600">Nueva cantidad ({adjustOpen.unidad})</label>

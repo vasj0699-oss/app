@@ -67,7 +67,7 @@ const ListEditor = ({ items, setItems, placeholder, testidPrefix }) => {
 
 const Config = () => {
     const [tab, setTab] = useState("empresa");
-    const [cfg, setCfg] = useState({ empresa: "AJVJ Hidropónicos", razon_social: "AJVJ Hidropónicos SPR DE RI DE CV", asesor: "", jefe_produccion: "", objetivos: [], categorias_producto: [] });
+    const [cfg, setCfg] = useState({ empresa: "AJVJ Hidropónicos", razon_social: "AJVJ Hidropónicos SPR DE RI DE CV", asesor: "", monitor: "", objetivos: [], categorias_producto: [] });
     const [modulos, setModulos] = useState([]);
     const [productos, setProductos] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -107,7 +107,7 @@ const Config = () => {
                             ["empresa", "Empresa"],
                             ["razon_social", "Razón social"],
                             ["asesor", "Asesor"],
-                            ["jefe_produccion", "Jefe de producción"],
+                            ["monitor", "Monitor"],
                         ].map(([k, l]) => (
                             <div key={k}>
                                 <label className="text-sm font-medium text-[#1C1C1A]">{l}</label>
@@ -278,7 +278,45 @@ const ProductosEditor = ({ productos, categorias, onChange }) => {
 
     return (
         <div className="space-y-4">
-            <Section title="Catálogo de productos" actions={<button onClick={startNew} data-testid="new-producto-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] hover:bg-[#3d4720] text-sm flex items-center gap-1.5"><Plus className="w-4 h-4" />Nuevo producto</button>}>
+            {/* Formulario ARRIBA del catálogo */}
+            {editing ? (
+                <Section title={editing.id ? "Editar producto" : "Nuevo producto"} actions={
+                    <div className="flex gap-2">
+                        <button onClick={() => setEditing(null)} className="px-3 py-2 text-sm rounded-[10px] border border-neutral-200">Cancelar</button>
+                        <button onClick={save} data-testid="save-producto-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] text-sm flex items-center gap-1.5"><Save className="w-4 h-4" />Guardar</button>
+                    </div>
+                }>
+                    <div className="flex items-start gap-2 text-xs text-[#4B5828] bg-[#C8D4A0]/30 rounded-[10px] p-2.5 mb-4">
+                        <span className="inline-flex items-center justify-center w-4 h-4 bg-[#4B5828] text-white rounded-full text-[10px] font-bold flex-shrink-0">i</span>
+                        <div>
+                            <b>Nota sobre precio unitario:</b> el precio debe expresarse por cada <b>unidad habitual del producto</b> (por ejemplo, $ por Litro si la unidad es L, $ por Kg si es kg). Todos los cálculos de costos de aplicación y valoración de inventario se hacen con base en esto.
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <Field label="Nombre"><input data-testid="producto-nombre-input" value={editing.nombre} onChange={(e) => setEditing({ ...editing, nombre: e.target.value })} className="ip" /></Field>
+                        <Field label="Categoría">
+                            <select value={editing.categoria || ""} onChange={(e) => setEditing({ ...editing, categoria: e.target.value })} className="ip">
+                                <option value="">— Sin categoría —</option>
+                                {categorias.map((c) => (<option key={c} value={c}>{c}</option>))}
+                            </select>
+                        </Field>
+                        <Field label="Dosis habitual"><input type="number" step="any" value={editing.dosis_habitual || 0} onChange={(e) => setEditing({ ...editing, dosis_habitual: parseFloat(e.target.value || 0) })} className="ip" /></Field>
+                        <Field label="Unidad habitual">
+                            <select value={editing.unidad_habitual} onChange={(e) => setEditing({ ...editing, unidad_habitual: e.target.value })} className="ip">
+                                {["L", "mL", "kg", "g"].map((u) => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                        </Field>
+                        <Field label={`Precio unitario ($ por ${editing.unidad_habitual || "L"})`}><input type="number" step="any" value={editing.precio_unitario || 0} onChange={(e) => setEditing({ ...editing, precio_unitario: parseFloat(e.target.value || 0) })} className="ip" /></Field>
+                        <Field label="Notas"><input value={editing.notas || ""} onChange={(e) => setEditing({ ...editing, notas: e.target.value })} className="ip" /></Field>
+                    </div>
+                </Section>
+            ) : (
+                <div className="flex justify-end">
+                    <button onClick={startNew} data-testid="new-producto-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] hover:bg-[#3d4720] text-sm flex items-center gap-1.5"><Plus className="w-4 h-4" />Nuevo producto</button>
+                </div>
+            )}
+
+            <Section title="Catálogo de productos">
                 <div className="overflow-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-[#F5F5F0] text-[#4B5828] text-xs uppercase tracking-wider">
@@ -299,7 +337,7 @@ const ProductosEditor = ({ productos, categorias, onChange }) => {
                                     <td className="px-3 py-2.5 text-neutral-600">{p.categoria || "—"}</td>
                                     <td className="px-3 py-2.5 text-right">{p.dosis_habitual}</td>
                                     <td className="px-3 py-2.5">{p.unidad_habitual}</td>
-                                    <td className="px-3 py-2.5 text-right">${p.precio_unitario?.toFixed(2)}</td>
+                                    <td className="px-3 py-2.5 text-right">${(p.precio_unitario || 0).toLocaleString("es-MX", { minimumFractionDigits: 2 })} / {p.unidad_habitual}</td>
                                     <td className="px-3 py-2.5 text-right">
                                         <button onClick={() => setEditing(p)} className="p-1.5 hover:bg-[#C8D4A0]/40 rounded text-[#4B5828]"><Pencil className="w-4 h-4" /></button>
                                         <button onClick={() => remove(p.id)} className="p-1.5 hover:bg-red-50 rounded text-red-600 ml-1"><Trash2 className="w-4 h-4" /></button>
@@ -310,33 +348,6 @@ const ProductosEditor = ({ productos, categorias, onChange }) => {
                     </table>
                 </div>
             </Section>
-
-            {editing && (
-                <Section title={editing.id ? "Editar producto" : "Nuevo producto"} actions={
-                    <div className="flex gap-2">
-                        <button onClick={() => setEditing(null)} className="px-3 py-2 text-sm rounded-[10px] border border-neutral-200">Cancelar</button>
-                        <button onClick={save} data-testid="save-producto-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] text-sm flex items-center gap-1.5"><Save className="w-4 h-4" />Guardar</button>
-                    </div>
-                }>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <Field label="Nombre"><input data-testid="producto-nombre-input" value={editing.nombre} onChange={(e) => setEditing({ ...editing, nombre: e.target.value })} className="ip" /></Field>
-                        <Field label="Categoría">
-                            <select value={editing.categoria || ""} onChange={(e) => setEditing({ ...editing, categoria: e.target.value })} className="ip">
-                                <option value="">— Sin categoría —</option>
-                                {categorias.map((c) => (<option key={c} value={c}>{c}</option>))}
-                            </select>
-                        </Field>
-                        <Field label="Dosis habitual"><input type="number" step="any" value={editing.dosis_habitual || 0} onChange={(e) => setEditing({ ...editing, dosis_habitual: parseFloat(e.target.value || 0) })} className="ip" /></Field>
-                        <Field label="Unidad habitual">
-                            <select value={editing.unidad_habitual} onChange={(e) => setEditing({ ...editing, unidad_habitual: e.target.value })} className="ip">
-                                {["L", "mL", "kg", "g"].map((u) => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                        </Field>
-                        <Field label="Precio unitario ($)"><input type="number" step="any" value={editing.precio_unitario || 0} onChange={(e) => setEditing({ ...editing, precio_unitario: parseFloat(e.target.value || 0) })} className="ip" /></Field>
-                        <Field label="Notas"><input value={editing.notas || ""} onChange={(e) => setEditing({ ...editing, notas: e.target.value })} className="ip" /></Field>
-                    </div>
-                </Section>
-            )}
         </div>
     );
 };

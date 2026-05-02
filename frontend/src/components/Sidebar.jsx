@@ -1,25 +1,29 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
     LayoutDashboard, FilePlus, Boxes, ShoppingCart, FileText,
-    History, Settings, Users, LogOut, Menu, X, Sprout,
+    History, Settings, Users, LogOut, Menu, X,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { AjvjMark } from "@/components/AjvjLogo";
+import { api } from "@/lib/api";
 
+// Navegación por rol
+// admin: todo
+// monitor: Captura, Inventario, Compras, Pedidos, Historial
+// jefe: Captura, Inventario, Compras, Pedidos, Historial
 const NAV = [
-    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
-    { to: "/captura", label: "Captura", icon: FilePlus, testid: "nav-captura" },
-    { to: "/inventario", label: "Inventario", icon: Boxes, testid: "nav-inventario" },
-    { to: "/compras", label: "Compras", icon: ShoppingCart, testid: "nav-compras" },
-    { to: "/pedidos", label: "Pedidos", icon: FileText, testid: "nav-pedidos" },
-    { to: "/historial", label: "Historial", icon: History, testid: "nav-historial" },
-    { to: "/config", label: "Configuración", icon: Settings, adminOnly: true, testid: "nav-config" },
-    { to: "/usuarios", label: "Usuarios", icon: Users, adminOnly: true, testid: "nav-usuarios" },
+    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard", roles: ["admin"] },
+    { to: "/captura", label: "Captura", icon: FilePlus, testid: "nav-captura", roles: ["admin", "monitor", "jefe"] },
+    { to: "/inventario", label: "Inventario", icon: Boxes, testid: "nav-inventario", roles: ["admin", "monitor", "jefe"] },
+    { to: "/compras", label: "Compras", icon: ShoppingCart, testid: "nav-compras", roles: ["admin", "monitor", "jefe"] },
+    { to: "/pedidos", label: "Pedidos", icon: FileText, testid: "nav-pedidos", roles: ["admin", "monitor", "jefe"] },
+    { to: "/historial", label: "Historial", icon: History, testid: "nav-historial", roles: ["admin", "monitor", "jefe"] },
+    { to: "/config", label: "Configuración", icon: Settings, testid: "nav-config", roles: ["admin"] },
+    { to: "/usuarios", label: "Usuarios", icon: Users, testid: "nav-usuarios", roles: ["admin"] },
 ];
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_agroquim-control/artifacts/j54zw2ix_LOGOMesa%20de%20trabajo%201%20copia%2033.png";
-
-const NavItem = ({ to, label, Icon, testid, onClick }) => (
+const NavItem = ({ to, label, Icon, testid, onClick, badge }) => (
     <NavLink
         to={to}
         data-testid={testid}
@@ -33,11 +37,16 @@ const NavItem = ({ to, label, Icon, testid, onClick }) => (
         }
     >
         <Icon className="w-[18px] h-[18px]" />
-        <span>{label}</span>
+        <span className="flex-1">{label}</span>
+        {badge > 0 && (
+            <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                {badge}
+            </span>
+        )}
     </NavLink>
 );
 
-const SidebarBody = ({ onItemClick }) => {
+const SidebarBody = ({ onItemClick, alertasCount }) => {
     const { user, logout, isAdmin } = useAuth();
     const navigate = useNavigate();
 
@@ -46,26 +55,36 @@ const SidebarBody = ({ onItemClick }) => {
         navigate("/login");
     };
 
+    const nav = NAV.filter((n) => n.roles.includes(user?.rol));
+
     return (
         <div className="flex flex-col h-full">
             {/* Logo */}
             <div className="px-5 pt-6 pb-5 border-b border-white/10">
                 <div className="flex items-center gap-3">
-                    <img src={LOGO_URL} alt="AJVJ" className="w-12 h-12 rounded-md ajvj-logo-on-dark" />
+                    <AjvjMark size={44} color="#C8D4A0" />
                     <div className="leading-tight">
-                        <div className="font-heading font-bold text-white text-lg tracking-wide">AJVJ</div>
-                        <div className="text-[#8FAD3C] text-xs uppercase tracking-[0.15em] font-semibold">Hidropónicos</div>
+                        <div className="font-heading font-extrabold text-white text-xl tracking-wide">AJVJ</div>
+                        <div className="text-[#8FAD3C] text-[10px] uppercase tracking-[0.2em] font-bold mt-0.5">Hidropónicos</div>
                     </div>
                 </div>
-                <div className="mt-3 text-[10px] uppercase tracking-[0.1em] text-[#C8D4A0]/70">
+                <div className="mt-3 text-[10px] uppercase tracking-[0.12em] text-white/60 font-medium">
                     Aplicaciones Fitosanidad
                 </div>
             </div>
 
             {/* Nav */}
             <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-                {NAV.filter((n) => !n.adminOnly || isAdmin).map((n) => (
-                    <NavItem key={n.to} to={n.to} label={n.label} Icon={n.icon} testid={n.testid} onClick={onItemClick} />
+                {nav.map((n) => (
+                    <NavItem
+                        key={n.to}
+                        to={n.to}
+                        label={n.label}
+                        Icon={n.icon}
+                        testid={n.testid}
+                        onClick={onItemClick}
+                        badge={isAdmin && n.to === "/dashboard" ? alertasCount : 0}
+                    />
                 ))}
             </nav>
 
@@ -93,14 +112,29 @@ const SidebarBody = ({ onItemClick }) => {
 };
 
 const Sidebar = () => {
+    const { isAdmin } = useAuth();
     const [open, setOpen] = useState(false);
+    const [alertas, setAlertas] = useState(0);
+
+    useEffect(() => {
+        if (!isAdmin) return;
+        const load = async () => {
+            try {
+                const r = await api.get("/inventario/ajustes/pendientes");
+                setAlertas(r.data.length);
+            } catch { /* silent */ }
+        };
+        load();
+        const t = setInterval(load, 60000); // refresh cada minuto
+        return () => clearInterval(t);
+    }, [isAdmin]);
 
     return (
         <>
             {/* Mobile top bar */}
             <header className="md:hidden sticky top-0 z-40 bg-[#4B5828] text-white px-4 py-3 flex items-center justify-between shadow">
                 <div className="flex items-center gap-2">
-                    <Sprout className="w-5 h-5 text-[#8FAD3C]" />
+                    <AjvjMark size={28} color="#C8D4A0" />
                     <span className="font-heading font-bold">AJVJ Hidropónicos</span>
                 </div>
                 <button
@@ -114,7 +148,7 @@ const Sidebar = () => {
 
             {/* Desktop sidebar */}
             <aside className="hidden md:flex w-64 fixed left-0 top-0 h-screen bg-[#4B5828] z-40">
-                <SidebarBody />
+                <SidebarBody alertasCount={alertas} />
             </aside>
 
             {/* Mobile drawer */}
@@ -126,12 +160,12 @@ const Sidebar = () => {
                     >
                         <button
                             onClick={() => setOpen(false)}
-                            className="absolute top-4 right-4 text-[#C8D4A0] hover:text-white"
+                            className="absolute top-4 right-4 text-[#C8D4A0] hover:text-white z-10"
                             data-testid="mobile-menu-close"
                         >
                             <X className="w-5 h-5" />
                         </button>
-                        <SidebarBody onItemClick={() => setOpen(false)} />
+                        <SidebarBody onItemClick={() => setOpen(false)} alertasCount={alertas} />
                     </aside>
                 </div>
             )}

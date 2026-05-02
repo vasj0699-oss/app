@@ -2,8 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sprout, Loader2 } from "lucide-react";
-
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_agroquim-control/artifacts/j54zw2ix_LOGOMesa%20de%20trabajo%201%20copia%2033.png";
+import AjvjLogo from "@/components/AjvjLogo";
 
 const Login = () => {
     const { user, login } = useAuth();
@@ -30,12 +29,8 @@ const Login = () => {
             {/* Left: form */}
             <div className="flex-1 flex items-center justify-center px-6 py-10">
                 <div className="w-full max-w-md">
-                    <div className="flex items-center gap-3 mb-8">
-                        <img src={LOGO_URL} alt="AJVJ" className="w-14 h-14 rounded-md bg-[#1C1C1A] p-1" />
-                        <div>
-                            <div className="font-heading font-bold text-2xl text-[#4B5828] tracking-tight">AJVJ</div>
-                            <div className="text-[#8FAD3C] text-xs uppercase tracking-[0.18em] font-semibold">Hidropónicos</div>
-                        </div>
+                    <div className="mb-8">
+                        <AjvjLogo size={56} primary="#4B5828" accent="#8FAD3C" />
                     </div>
 
                     <div className="mb-8">

@@ -1,0 +1,44 @@
+{
+  "summary": "End-to-end test of AJVJ Fitosanidad iteration 2 (estructurales: roles, captura semanal, compras multi-item, dashboard, ajustes con revisión). Backend 16/16 tests pass (100%) incluyendo: compras multi-item con conversión L<->mL y kg<->g, DELETE compra revierte todos los items, bitácoras/batch crea N bitácoras y descuenta N veces, duplicado de producto case-insensitive rechazado con 400, a_pedir=max(0, necesito-stock), dashboard admin-only (monitor/jefe reciben 403), cultivo normalizado ('jitomate' → 'Jitomate'), costo_por_cultivo_variedad presente, ajuste de admin con revisado=True, ajuste de jefe con requiere_revision=True listado en /inventario/ajustes/pendientes, marcar revisado funciona, config migró jefe_produccion→monitor. Frontend Playwright verificó 16 flujos: login admin→/dashboard; jefe y monitor→/captura; sidebar admin 8 ítems, sidebar jefe/monitor 5 ítems sin Dashboard/Config/Usuarios; dinero con formato $1,234.56 (coma miles); Historial muestra 'Total gastado' solo a admin; Compras admin tiene 'Agregar producto' multi-ítem y nota sobre precio unitario; Compras jefe no muestra columnas de dinero (P.Unit/Total); Inventario jefe ve botón Ajustar; Inventario monitor NO lo ve; monitor accediendo /dashboard es redirigido a /captura.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "@app.on_event startup/shutdown", "issue": "FastAPI deprecó @app.on_event en favor de lifespan handlers (DeprecationWarning). No bloquea."},
+      {"endpoint": "POST /api/bitacoras(/batch)", "issue": "Permite inventario negativo (descuenta sin validar stock). Idealmente validar o advertir."},
+      {"endpoint": "DELETE /api/productos/{id} y /api/modulos/{id}", "issue": "No verifica dependencias (compras/bitácoras/inventario/movimientos quedan con producto_id huérfano)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Historial.jsx líneas 94-104", "issue": "Hydration warning: <button> anidado dentro de otro <button>. El botón de eliminar bitácora (data-testid=del-bitacora-*) está dentro del botón toggle (data-testid=bitacora-toggle-*). HTML inválido — reemplazar el contenedor externo por un <div> clickable o extraer el botón de eliminar fuera del toggle.", "selector": "button[data-testid^='bitacora-toggle'] button[data-testid^='del-bitacora']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Captura", "issues": ["El input de Fecha usa el date picker nativo del navegador (input type=date) en lugar del Calendar de shadcn. Mismo pendiente reportado en iteración 1 para Pedidos."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix hydration: evitar <button> anidado en Historial.jsx (separar botón de eliminar fuera del toggle o usar div onClick)",
+    "(opcional) Reemplazar input type=date por componente Calendar de shadcn en Captura y Pedidos para consistencia de diseño",
+    "(opcional) Migrar @app.on_event a lifespan handlers",
+    "(opcional) Validar stock en bitácoras y dependencias en DELETE de productos/módulos"
+  ],
+  "critical_code_review_comments": [
+    "server.py ~980 líneas. Considerar dividir en routers por dominio (auth, compras, bitacoras, pedidos, dashboard).",
+    "convertir_unidad retorna None cuando unidades incompatibles pero _aplicar_compra_item cae a unidad capturada y silenciosamente rompe la unidad_base del inventario. Loguear o rechazar con 400.",
+    "En /api/compras no hay validación de permiso: cualquier usuario autenticado (monitor, jefe, admin) puede crear compras; verificar si debería ser admin_or_jefe según la regla de roles.",
+    "En Historial.jsx hay <button> anidado dentro de <button> (HTML inválido)."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (16/16 tests)", "frontend": "100% de flujos funcionales (1 warning de hydration)"},
+  "test_credentials": "admin@ajvj.com/admin123 (admin), TEST_monitor@ajvj.com/monitor123 (monitor), TEST_jefe@ajvj.com/jefe12345 (jefe)",
+  "seed_data_creation": "Tests crean y limpian usuarios TEST_monitor, TEST_jefe, módulos TEST_MOD_*, productos TEST_PRODA_*/TEST_PRODB_*/TEST_AJU_*/TEST_DUP_*. Las compras/bitácoras creadas se eliminan por cada test. Los usuarios TEST_* quedan entre corridas (la fixture ignora 400 de duplicado).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend completamente cubierto con 16 tests pytest (auth, config con campo monitor, compras multi-item con conversión L<->mL y kg<->g, bitácoras/batch, pedidos con a_pedir, PDF binario, dashboard RBAC + normalización de cultivo + cultivo_variedad, ajustes con flujo de revisión jefe→admin). Frontend verificado con Playwright: 3 roles (admin/jefe/monitor) con redirección, sidebar condicional, money-hiding, widgets condicionales. Único issue real: HTML inválido (<button> dentro de <button>) en Historial.jsx — genera hydration warning y es bug funcional porque el click del botón interior burbujea.",
+  "rca of the issue": "HTML inválido en Historial.jsx: la card de bitácora usa <button data-testid='bitacora-toggle-*'> como contenedor clickable, y dentro coloca otro <button data-testid='del-bitacora-*'> para eliminar. React dispara hydration error y el navegador puede mover el botón interno fuera, además el click del botón de eliminar burbujea al toggle. Mitigación: reemplazar el <button> externo por <div role='button' onClick={...}> o extraer el botón de eliminar a una fila fuera del toggle."
+}

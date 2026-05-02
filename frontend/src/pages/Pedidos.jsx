@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api, API_BASE, formatApiError } from "@/lib/api";
+import { fmtMoney } from "@/lib/format";
 import { toast } from "sonner";
 import { FileDown, Calculator } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Pedidos = () => {
+    const { user } = useAuth();
+    const hideMoney = user?.rol === "monitor" || user?.rol === "jefe";
     const [modulos, setModulos] = useState([]);
     const [moduloIds, setModuloIds] = useState([]);
     const [fechaInicio, setFechaInicio] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 28); return d.toISOString().slice(0, 10); });
@@ -47,6 +51,8 @@ const Pedidos = () => {
 
     const toggleModulo = (id) => setModuloIds(moduloIds.includes(id) ? moduloIds.filter((m) => m !== id) : [...moduloIds, id]);
 
+    const itemsAPedir = useMemo(() => items.filter((i) => i.cantidad_a_pedir > 0), [items]);
+
     return (
         <AppLayout
             title="Pedidos"
@@ -56,7 +62,7 @@ const Pedidos = () => {
                     <button onClick={calcular} disabled={loading} data-testid="calcular-btn" className="px-4 py-2 border border-[#8FAD3C] text-[#4B5828] rounded-[10px] hover:bg-[#C8D4A0]/20 flex items-center gap-1.5 text-sm disabled:opacity-60">
                         <Calculator className="w-4 h-4" />{loading ? "Calculando…" : "Calcular"}
                     </button>
-                    <button onClick={descargarPDF} disabled={downloading || items.length === 0} data-testid="pdf-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] hover:bg-[#3d4720] flex items-center gap-1.5 text-sm disabled:opacity-60">
+                    <button onClick={descargarPDF} disabled={downloading || itemsAPedir.length === 0} data-testid="pdf-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] hover:bg-[#3d4720] flex items-center gap-1.5 text-sm disabled:opacity-60">
                         <FileDown className="w-4 h-4" />{downloading ? "Generando…" : "Generar PDF"}
                     </button>
                 </div>
@@ -87,32 +93,32 @@ const Pedidos = () => {
                             <th className="px-4 py-3 text-left font-medium">Categoría</th>
                             <th className="px-4 py-3 text-right font-medium">Necesito</th>
                             <th className="px-4 py-3 text-right font-medium">Tengo</th>
-                            <th className="px-4 py-3 text-right font-medium">Diferencia</th>
+                            <th className="px-4 py-3 text-right font-medium">A pedir</th>
                             <th className="px-4 py-3 text-left font-medium">Unidad</th>
-                            <th className="px-4 py-3 text-right font-medium">P. Unit.</th>
-                            <th className="px-4 py-3 text-right font-medium">Total est.</th>
+                            {!hideMoney && <th className="px-4 py-3 text-right font-medium">P. Unit.</th>}
+                            {!hideMoney && <th className="px-4 py-3 text-right font-medium">Total est.</th>}
                         </tr>
                     </thead>
                     <tbody>
-                        {items.length === 0 && <tr><td colSpan={8} className="px-4 py-6 text-center text-neutral-500">Sin datos. Pulsa <b>Calcular</b>.</td></tr>}
+                        {items.length === 0 && <tr><td colSpan={hideMoney ? 6 : 8} className="px-4 py-6 text-center text-neutral-500">Sin datos. Pulsa <b>Calcular</b>.</td></tr>}
                         {items.map((r) => (
                             <tr key={r.producto_id} className={`border-b border-neutral-100 hover:bg-[#C8D4A0]/15 even:bg-[#F5F5F0]/40 ${r.cantidad_a_pedir > 0 ? "bg-amber-50/40" : ""}`}>
                                 <td className="px-4 py-2.5 font-medium">{r.nombre}</td>
                                 <td className="px-4 py-2.5 text-neutral-600">{r.categoria || "—"}</td>
                                 <td className="px-4 py-2.5 text-right">{r.necesito.toFixed(2)}</td>
                                 <td className={`px-4 py-2.5 text-right ${r.tengo < 0 ? "text-red-600" : ""}`}>{r.tengo.toFixed(2)}</td>
-                                <td className={`px-4 py-2.5 text-right font-semibold ${r.cantidad_a_pedir > 0 ? "text-amber-700" : "text-green-700"}`}>{r.cantidad_a_pedir > 0 ? `+ ${r.cantidad_a_pedir.toFixed(2)}` : "OK"}</td>
+                                <td className={`px-4 py-2.5 text-right font-semibold ${r.cantidad_a_pedir > 0 ? "text-amber-700" : "text-green-700"}`}>{r.cantidad_a_pedir > 0 ? r.cantidad_a_pedir.toFixed(2) : "0.00"}</td>
                                 <td className="px-4 py-2.5">{r.unidad}</td>
-                                <td className="px-4 py-2.5 text-right">${r.precio_unitario?.toFixed(2)}</td>
-                                <td className="px-4 py-2.5 text-right font-semibold text-[#4B5828]">${r.total_estimado.toFixed(2)}</td>
+                                {!hideMoney && <td className="px-4 py-2.5 text-right">{fmtMoney(r.precio_unitario)}</td>}
+                                {!hideMoney && <td className="px-4 py-2.5 text-right font-semibold text-[#4B5828]">{fmtMoney(r.total_estimado)}</td>}
                             </tr>
                         ))}
                     </tbody>
-                    {items.length > 0 && (
+                    {items.length > 0 && !hideMoney && (
                         <tfoot>
                             <tr className="bg-[#4B5828] text-white font-bold">
                                 <td colSpan={7} className="px-4 py-3 text-right">TOTAL ESTIMADO</td>
-                                <td className="px-4 py-3 text-right" data-testid="pedido-total">${total.toFixed(2)}</td>
+                                <td className="px-4 py-3 text-right" data-testid="pedido-total">{fmtMoney(total)}</td>
                             </tr>
                         </tfoot>
                     )}
