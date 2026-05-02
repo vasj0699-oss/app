@@ -91,7 +91,14 @@ const Historial = () => {
                     const ciclo = m?.ciclos?.find((c) => c.numero === b.ciclo_numero);
                     return (
                         <div key={b.id} className="bg-white rounded-[10px] border border-neutral-200 shadow-[0_2px_8px_-2px_rgba(28,28,26,0.08)]">
-                            <button onClick={() => setOpen((o) => ({ ...o, [b.id]: !o[b.id] }))} data-testid={`bitacora-toggle-${b.id}`} className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#C8D4A0]/15 rounded-[10px]">
+                            <div
+                                onClick={() => setOpen((o) => ({ ...o, [b.id]: !o[b.id] }))}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setOpen((o) => ({ ...o, [b.id]: !o[b.id] }))}
+                                data-testid={`bitacora-toggle-${b.id}`}
+                                className="w-full px-5 py-3 flex items-center justify-between hover:bg-[#C8D4A0]/15 rounded-[10px] cursor-pointer"
+                            >
                                 <div className="flex items-center gap-4 text-left">
                                     {open[b.id] ? <ChevronUp className="w-4 h-4 text-[#4B5828]" /> : <ChevronDown className="w-4 h-4 text-[#4B5828]" />}
                                     <div>
@@ -103,7 +110,7 @@ const Historial = () => {
                                     {!hideMoney && <span className="font-bold text-[#4B5828]">{fmtMoney(b.costo_total_bitacora)}</span>}
                                     {isAdmin && <button onClick={(e) => { e.stopPropagation(); remove(b.id); }} className="text-red-600 p-1 hover:bg-red-50 rounded" data-testid={`del-bitacora-${b.id}`}><Trash2 className="w-4 h-4" /></button>}
                                 </div>
-                            </button>
+                            </div>
                             {open[b.id] && (
                                 <div className="px-5 pb-5 space-y-3">
                                     {b.aplicaciones?.map((ap, i) => (
