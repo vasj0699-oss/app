@@ -82,11 +82,29 @@ const Captura = () => {
         })();
     }, []);
 
-    // Ciclo seleccionado del PRIMER módulo (para cálculos base)
+    // Ciclo seleccionado del PRIMER módulo (sólo para PREVIEW de filas)
     const primerModulo = useMemo(() => modulos.find((m) => m.id === moduloIdsSeleccionados[0]), [modulos, moduloIdsSeleccionados]);
     const cicloSel = useMemo(() => primerModulo?.ciclos?.find((c) => c.numero === cicloNumero) || primerModulo?.ciclos?.[0], [primerModulo, cicloNumero]);
 
     const toggleModulo = (id) => setModuloIdsSeleccionados((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+
+    // Recalcula cantidad_usada_total y costo_linea de un producto SEGÚN el ciclo de un módulo específico
+    const recalcProductosParaModulo = (prods, modId) => {
+        const mod = modulos.find((m) => m.id === modId);
+        const ciclo = mod?.ciclos?.find((c) => c.numero === cicloNumero) || mod?.ciclos?.[0];
+        return prods.map((p) => {
+            const prodCat = productos.find((pp) => pp.id === p.producto_id);
+            if (!prodCat || !ciclo) return p;
+            const cantCalc = calcularCantidadTotal({ dosis: p.dosis, unidadDosis: p.unidad, ciclo });
+            const cantBase = convertirAUnidadBase(cantCalc, p.unidad, prodCat.unidad_habitual);
+            const cantidadUsada = parseFloat(cantBase.toFixed(4));
+            return {
+                ...p,
+                cantidad_usada_total: cantidadUsada,
+                costo_linea: parseFloat((cantidadUsada * (p.precio_unitario || 0)).toFixed(2)),
+            };
+        });
+    };
 
     // Helpers para manipular lista de aplicaciones (individual o día semanal)
     const getActiveAplicaciones = () => tipo === "individual" ? aplicaciones : aplicacionesPorDia[diaActivo];
@@ -152,6 +170,7 @@ const Captura = () => {
         toast.success(`Aplicaciones copiadas a ${diasCopiar.length} día(s)`);
     };
 
+    // Total de la vista activa (preview con datos del PRIMER módulo)
     const totalActual = useMemo(() => {
         const aps = getActiveAplicaciones();
         let t = 0;
@@ -160,18 +179,20 @@ const Captura = () => {
         // eslint-disable-next-line
     }, [aplicaciones, aplicacionesPorDia, diaActivo, tipo]);
 
-    const totalSemanal = useMemo(() => {
-        if (tipo !== "semanal") return 0;
-        let t = 0;
-        for (const dia of aplicacionesPorDia) for (const ap of dia) for (const p of ap.productos) t += p.costo_linea || 0;
-        return t;
-    }, [tipo, aplicacionesPorDia]);
-
-    // Suma TOTAL considerando multi-módulo
+    // Total final RECALCULADO por cada módulo (cada uno con su propia config)
     const totalFinal = useMemo(() => {
-        const n = moduloIdsSeleccionados.length || 1;
-        return (tipo === "individual" ? totalActual : totalSemanal) * n;
-    }, [tipo, totalActual, totalSemanal, moduloIdsSeleccionados.length]);
+        if (moduloIdsSeleccionados.length === 0) return 0;
+        const apsToProcess = tipo === "individual" ? aplicaciones : aplicacionesPorDia.flat();
+        let t = 0;
+        for (const modId of moduloIdsSeleccionados) {
+            for (const ap of apsToProcess) {
+                const recalc = recalcProductosParaModulo(ap.productos, modId);
+                for (const p of recalc) t += p.costo_linea || 0;
+            }
+        }
+        return t;
+        // eslint-disable-next-line
+    }, [aplicaciones, aplicacionesPorDia, moduloIdsSeleccionados, modulos, productos, cicloNumero, tipo]);
 
     const submit = async () => {
         if (moduloIdsSeleccionados.length === 0) return toast.error("Selecciona al menos un módulo destino");
@@ -193,10 +214,13 @@ const Captura = () => {
                         ciclo_numero: cicloNumero,
                         asesor,
                         monitor,
-                        aplicaciones: aplicaciones.map((ap) => ({
-                            tipo: ap.tipo, objetivo: ap.objetivo, productos: ap.productos,
-                            costo_total_aplicacion: ap.productos.reduce((s, p) => s + (p.costo_linea || 0), 0),
-                        })),
+                        aplicaciones: aplicaciones.map((ap) => {
+                            const recalc = recalcProductosParaModulo(ap.productos, modId);
+                            return {
+                                tipo: ap.tipo, objetivo: ap.objetivo, productos: recalc,
+                                costo_total_aplicacion: parseFloat(recalc.reduce((s, p) => s + (p.costo_linea || 0), 0).toFixed(2)),
+                            };
+                        }),
                     });
                 }
             } else {
@@ -218,10 +242,13 @@ const Captura = () => {
                             modulo_id: modId,
                             ciclo_numero: cicloNumero,
                             asesor, monitor,
-                            aplicaciones: apps.map((ap) => ({
-                                tipo: ap.tipo, objetivo: ap.objetivo, productos: ap.productos,
-                                costo_total_aplicacion: ap.productos.reduce((s, p) => s + (p.costo_linea || 0), 0),
-                            })),
+                            aplicaciones: apps.map((ap) => {
+                                const recalc = recalcProductosParaModulo(ap.productos, modId);
+                                return {
+                                    tipo: ap.tipo, objetivo: ap.objetivo, productos: recalc,
+                                    costo_total_aplicacion: parseFloat(recalc.reduce((s, p) => s + (p.costo_linea || 0), 0).toFixed(2)),
+                                };
+                            }),
                         });
                     }
                 }
@@ -304,6 +331,14 @@ const Captura = () => {
                         <span>Plantas: <b>{cicloSel.num_plantas}</b></span>
                         <span>Superficie: <b>{cicloSel.superficie_m2} m²</b></span>
                         <span>Caldo foliar: <b>{cicloSel.caldo_foliar_L} L</b></span>
+                    </div>
+                )}
+                {moduloIdsSeleccionados.length > 1 && (
+                    <div className="mt-3 flex items-start gap-2 text-xs text-[#4B5828] bg-[#C8D4A0]/30 rounded-[10px] p-2.5">
+                        <span className="inline-flex items-center justify-center w-4 h-4 bg-[#4B5828] text-white rounded-full text-[10px] font-bold flex-shrink-0">i</span>
+                        <div>
+                            Las cantidades mostradas en cada fila son una <b>vista previa</b> usando la configuración del primer módulo seleccionado ({primerModulo ? `Módulo ${primerModulo.nombre}` : "—"}). Al guardar, el sistema <b>recalcula automáticamente</b> la dosis y el costo de cada producto para cada módulo según su propia superficie, número de plantas y caldo foliar.
+                        </div>
                     </div>
                 )}
             </div>
@@ -398,21 +433,37 @@ const Captura = () => {
                 </button>
 
                 {/* Totales */}
-                <div className="bg-[#4B5828] text-white rounded-[10px] p-5 space-y-1">
+                <div className="bg-[#4B5828] text-white rounded-[10px] p-5 space-y-2">
                     {tipo === "semanal" && (
                         <div className="flex items-center justify-between text-sm opacity-90">
-                            <span>Total {DIAS_SEMANA[diaActivo]}</span>
+                            <span>Total {DIAS_SEMANA[diaActivo]} (preview con {primerModulo ? `Módulo ${primerModulo.nombre}` : "—"})</span>
                             <span>{fmtMoney(totalActual)}</span>
                         </div>
                     )}
-                    {tipo === "semanal" && (
-                        <div className="flex items-center justify-between text-sm opacity-90">
-                            <span>Total semana (por módulo)</span>
-                            <span>{fmtMoney(totalSemanal)}</span>
+                    {moduloIdsSeleccionados.length > 1 && (
+                        <div className="border-t border-white/15 pt-2 space-y-1">
+                            <div className="text-[11px] uppercase tracking-wider opacity-70 font-medium mb-1">
+                                Desglose por módulo (cada uno con su propia configuración)
+                            </div>
+                            {moduloIdsSeleccionados.map((modId) => {
+                                const mod = modulos.find((m) => m.id === modId);
+                                const apsToProcess = tipo === "individual" ? aplicaciones : aplicacionesPorDia.flat();
+                                let tMod = 0;
+                                for (const ap of apsToProcess) {
+                                    const recalc = recalcProductosParaModulo(ap.productos, modId);
+                                    for (const p of recalc) tMod += p.costo_linea || 0;
+                                }
+                                return (
+                                    <div key={modId} className="flex items-center justify-between text-xs opacity-85">
+                                        <span>Módulo {mod?.nombre}</span>
+                                        <span>{fmtMoney(tMod)}</span>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
-                    <div className="flex items-center justify-between">
-                        <span className="font-medium">Total final ({moduloIdsSeleccionados.length} módulo{moduloIdsSeleccionados.length !== 1 ? 's' : ''})</span>
+                    <div className="flex items-center justify-between border-t border-white/20 pt-2">
+                        <span className="font-medium">Total final ({moduloIdsSeleccionados.length} módulo{moduloIdsSeleccionados.length !== 1 ? "s" : ""})</span>
                         <span className="font-heading text-2xl font-semibold" data-testid="total-bitacora">{fmtMoney(totalFinal)}</span>
                     </div>
                 </div>
