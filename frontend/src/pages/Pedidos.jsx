@@ -86,6 +86,14 @@ const Pedidos = () => {
             </div>
 
             <div className="bg-white rounded-[10px] border border-neutral-200 shadow-[0_2px_8px_-2px_rgba(28,28,26,0.08)] overflow-auto">
+                <div className="px-4 py-3 border-b border-neutral-100 text-xs text-neutral-600 flex items-start gap-2">
+                    <span className="inline-flex items-center justify-center w-4 h-4 bg-[#4B5828] text-white rounded-full text-[10px] font-bold flex-shrink-0">i</span>
+                    <div>
+                        <b>"Necesito"</b> = suma de productos requeridos por las bitácoras del rango que están en estado <b>Plan</b> (aún no aplicadas).
+                        Las bitácoras ya aplicadas no cuentan aquí porque su consumo ya está reflejado en <b>"Tengo"</b>.
+                        <b> "Compras en rango"</b> es informativo (cuánto entró durante el periodo).
+                    </div>
+                </div>
                 <table className="w-full text-sm">
                     <thead className="bg-[#4B5828] text-[#C8D4A0] text-xs uppercase tracking-wider">
                         <tr>
@@ -93,6 +101,7 @@ const Pedidos = () => {
                             <th className="px-4 py-3 text-left font-medium">Categoría</th>
                             <th className="px-4 py-3 text-right font-medium">Necesito</th>
                             <th className="px-4 py-3 text-right font-medium">Tengo</th>
+                            <th className="px-4 py-3 text-right font-medium">Compras en rango</th>
                             <th className="px-4 py-3 text-right font-medium">A pedir</th>
                             <th className="px-4 py-3 text-left font-medium">Unidad</th>
                             {!hideMoney && <th className="px-4 py-3 text-right font-medium">P. Unit.</th>}
@@ -100,13 +109,14 @@ const Pedidos = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {items.length === 0 && <tr><td colSpan={hideMoney ? 6 : 8} className="px-4 py-6 text-center text-neutral-500">Sin datos. Pulsa <b>Calcular</b>.</td></tr>}
+                        {items.length === 0 && <tr><td colSpan={hideMoney ? 7 : 9} className="px-4 py-6 text-center text-neutral-500">Sin datos. Pulsa <b>Calcular</b>.</td></tr>}
                         {items.map((r) => (
                             <tr key={r.producto_id} className={`border-b border-neutral-100 hover:bg-[#C8D4A0]/15 even:bg-[#F5F5F0]/40 ${r.cantidad_a_pedir > 0 ? "bg-amber-50/40" : ""}`}>
                                 <td className="px-4 py-2.5 font-medium">{r.nombre}</td>
                                 <td className="px-4 py-2.5 text-neutral-600">{r.categoria || "—"}</td>
                                 <td className="px-4 py-2.5 text-right">{r.necesito.toFixed(2)}</td>
                                 <td className={`px-4 py-2.5 text-right ${r.tengo < 0 ? "text-red-600" : ""}`}>{r.tengo.toFixed(2)}</td>
+                                <td className="px-4 py-2.5 text-right text-neutral-500">{(r.compras_en_rango ?? 0).toFixed(2)}</td>
                                 <td className={`px-4 py-2.5 text-right font-semibold ${r.cantidad_a_pedir > 0 ? "text-amber-700" : "text-green-700"}`}>{r.cantidad_a_pedir > 0 ? r.cantidad_a_pedir.toFixed(2) : "0.00"}</td>
                                 <td className="px-4 py-2.5">{r.unidad}</td>
                                 {!hideMoney && <td className="px-4 py-2.5 text-right">{fmtMoney(r.precio_unitario)}</td>}
@@ -117,7 +127,7 @@ const Pedidos = () => {
                     {items.length > 0 && !hideMoney && (
                         <tfoot>
                             <tr className="bg-[#4B5828] text-white font-bold">
-                                <td colSpan={7} className="px-4 py-3 text-right">TOTAL ESTIMADO</td>
+                                <td colSpan={8} className="px-4 py-3 text-right">TOTAL ESTIMADO</td>
                                 <td className="px-4 py-3 text-right" data-testid="pedido-total">{fmtMoney(total)}</td>
                             </tr>
                         </tfoot>

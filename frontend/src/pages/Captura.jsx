@@ -255,7 +255,7 @@ const Captura = () => {
             }
             if (bitacoras.length === 0) { setSaving(false); return; }
             await api.post("/bitacoras/batch", { bitacoras });
-            toast.success(`${bitacoras.length} bitácora(s) guardadas e inventario actualizado`);
+            toast.success(`${bitacoras.length} bitácora(s) guardadas como plan. Se descontará el inventario solo cuando las marques como APLICADAS desde Historial.`);
             setAplicaciones([]);
             setAplicacionesPorDia([[], [], [], [], [], [], []]);
         } catch (e) { toast.error(formatApiError(e)); }
@@ -267,7 +267,7 @@ const Captura = () => {
     return (
         <AppLayout
             title="Captura de bitácora"
-            subtitle={`Registro de aplicaciones fitosanitarias · ${moduloIdsSeleccionados.length} módulo(s) destino`}
+            subtitle={`Plan de aplicaciones · ${moduloIdsSeleccionados.length} módulo(s) destino · El inventario se descuenta al marcar la bitácora como APLICADA`}
             actions={
                 <button onClick={submit} disabled={saving} data-testid="save-bitacora-btn" className="px-4 py-2 bg-[#4B5828] text-white rounded-[10px] hover:bg-[#3d4720] flex items-center gap-1.5 disabled:opacity-60">
                     <Save className="w-4 h-4" />{saving ? "Guardando…" : "Guardar bitácora"}

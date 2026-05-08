@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 3 testing of AJVJ Fitosanidad. Backend 5/5 NEW pytest tests pass (100%) covering: bitacora plan default (aplicada=False NO descuenta), aplicar (descuenta + crea movimiento salida + idempotente con {ya_aplicada:true}), desaplicar (suma de vuelta + borra movimientos + aplicada=False), DELETE bitacora aplicada=True revierte / DELETE bitacora plan no toca inventario, /pedidos/calcular SOLO suma planes (no aplicadas) e incluye campo compras_en_rango filtrado por rango de fechas, migración GET /bitacoras devuelve campo aplicada bool en todas. FRONTEND COMPLETAMENTE ROTO: Historial.jsx no compila (SyntaxError), por lo que NINGUNA pantalla del front carga (login, captura, pedidos, etc). Imposible validar flujos UI hasta arreglar el archivo.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/bitacoras/{id}/desaplicar", "issue": "No requiere rol admin (cualquier usuario autenticado puede desaplicar y revertir inventario). DELETE bitacora sí requiere admin; aplicar/desaplicar deberían ser admin o admin_or_jefe para consistencia de control de inventario."},
+      {"endpoint": "POST /api/bitacoras/{id}/aplicar", "issue": "No valida stock disponible: si el plan necesita 5 L y solo hay 1 L, descuenta y deja inventario en -4 L sin advertir."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "/app/frontend/src/pages/Historial.jsx", "issue": "BLOQUEANTE — webpack falla con 'SyntaxError: Identifier aplicar has already been declared (38:10)'. Línea 29 declara `const aplicar = () => reload()` y línea 38 redeclara `const aplicar = async (id) => {...}`. Toda la app no carga (pantalla 'Compiled with problems').", "selector": "n/a (compile-time)", "priority": "CRITICAL"},
+      {"component": "/app/frontend/src/pages/Historial.jsx (líneas 163-191)", "issue": "El archivo tiene contenido DUPLICADO/HUÉRFANO después del `export default Historial;` de la línea 162 — JSX colgante de una versión previa. Eliminar todo desde la línea 163 al final.", "selector": "n/a", "priority": "CRITICAL"},
+      {"component": "Historial.jsx (render de bitácora)", "issue": "Las funciones aplicar(id) y desaplicar(id) están definidas pero NO se renderizan botones que las invoquen en la card de cada bitácora. Tampoco se muestra el badge 'Plan' (amber) / 'Aplicada' (verde) según b.aplicada. Falta cablear el feature completo en el JSX de la card.", "selector": "[data-testid^='bitacora-toggle-']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Historial — aplicar/desaplicar plan", "issue": "No probable porque el frontend no compila; además la UI no expone los botones aunque se arregle el syntax error.", "affected_selectors": ["aplicar-bitacora-*", "desaplicar-bitacora-*", "badge-plan", "badge-aplicada"]}
+    ],
+    "design_issues": [
+      {"screen": "Captura / Pedidos", "issues": ["No verificable por bug bloqueante. Pendiente pendiente de iteraciones previas: input type=date en lugar de Calendar de shadcn."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Arreglar Historial.jsx — renombrar la función handler de bitácora a 'aplicarBitacora' (o similar) para no chocar con `aplicar` del filtro de fecha (línea 29). Eliminar contenido duplicado desde línea 163 hasta el final del archivo (debe terminar en `export default Historial;` línea 162).",
+    "HIGH: Agregar en la card de cada bitácora: (a) badge amber 'Plan' si !b.aplicada y badge verde 'Aplicada' si b.aplicada; (b) botón 'Aplicar' visible cuando !b.aplicada; (c) botón 'Desaplicar' visible cuando b.aplicada (solo admin). Ya existen los handlers, solo falta el JSX y data-testids como aplicar-bitacora-{id}, desaplicar-bitacora-{id}, badge-plan-{id}, badge-aplicada-{id}.",
+    "Verificar Pedidos.jsx columna 'Compras en rango' renderiza r.compras_en_rango y nota explicativa al inicio (línea 92 ya muestra texto con 'Plan'). Validar diseño una vez que la app compile.",
+    "Verificar Captura.jsx muestra 'Desglose por módulo' (línea 446) cuando >1 módulo seleccionado y la nota informativa de preview. Validar UI una vez que compile.",
+    "(opcional) Considerar exigir admin/jefe para POST /bitacoras/{id}/aplicar y /desaplicar."
+  ],
+  "critical_code_review_comments": [
+    "Historial.jsx tiene declaraciones duplicadas de `aplicar` (línea 29 y 38) — error de compilación. La línea 29 (`const aplicar = () => reload()`) está vinculada al botón 'Aplicar' de filtros (línea 72); el handler de bitácora (línea 38) debe renombrarse a aplicarBitacora.",
+    "Historial.jsx: contenido duplicado desde línea 163 (incluye `text-right px-3 py-1.5\">Dosis</th>` colgante) probablemente resultado de un patch mal aplicado. Truncar el archivo.",
+    "server.py: aplicar/desaplicar bitácora no exigen rol admin, mientras DELETE bitácora sí. Inconsistencia de RBAC sobre operaciones que modifican el inventario.",
+    "server.py _descontar_inventario_bitacora no valida stock disponible: puede dejar inventario negativo silenciosamente al aplicar planes."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration3.py"],
+  "success_rate": {"backend": "100% (5/5 nuevos tests iteration 3) — 21/21 acumulado con backend_test.py", "frontend": "0% — compile error bloqueante, ninguna pantalla cargó"},
+  "test_credentials": "admin@ajvj.com / admin123",
+  "seed_data_creation": "Tests crean y limpian: módulo TEST_IT3_MOD_*, producto TEST_IT3_PROD_*, compras y bitácoras temporales. Toda la limpieza es idempotente (DELETE).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend de iteration 3 100% verificado vía pytest (test_iteration3.py): plan default no descuenta, aplicar descuenta + idempotente, desaplicar revierte y borra movimientos, DELETE plan vs aplicada, /pedidos/calcular suma SOLO planes y devuelve compras_en_rango filtrado por fecha. Frontend NO se pudo testear porque /app/frontend/src/pages/Historial.jsx no compila (duplicate const aplicar + JSX huérfano post export). Una vez arreglado, se requiere retest E2E de: (1) Captura multi-módulo recalcula cantidad_usada_total por módulo (test sugerido: M=1000m2 + N=5000m2, dosis L/ha → bitácoras con ratio 1:5); (2) Captura muestra 'Desglose por módulo' y nota informativa con >1 módulo; (3) Historial badges Plan/Aplicada y botones aplicar/desaplicar (faltan en JSX); (4) Pedidos columna 'Compras en rango' y nota.",
+  "rca of the issue": "RCA: Al modificar Historial.jsx para añadir aplicar/desaplicar de bitácora, el patch generó dos defectos: (a) introdujo `const aplicar = async (id) => {...}` sin renombrar la función previa `const aplicar = () => reload()` que sigue usándose como handler del botón filtro 'Aplicar' (línea 72); JS lanza 'Identifier already declared'. (b) El editor o un patch parcial dejó una copia del JSX de las filas de productos desde línea 163 hasta el final del archivo, después del `export default`. Reproducción: cualquier `yarn start` o build. Mitigación: renombrar la función de bitácora a `aplicarBitacora`/`desaplicarBitacora`, truncar archivo en línea 162, y añadir botones+badges en la card de bitácora (líneas ~120-124 dentro del flex `items-center gap-3` o como nueva fila condicional)."
+}

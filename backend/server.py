@@ -193,12 +193,14 @@ class BitacoraIn(BaseModel):
     monitor: str = ""
     aplicaciones: List[AplicacionIn]
     notas: str = ""
+    aplicada: bool = False  # False = plan futuro (no descuenta); True = aplicada (descuenta inventario)
 
 class BitacoraOut(BitacoraIn):
     id: str
     costo_total_bitacora: float
     guardada_en: str
     creado_por: Optional[str] = None
+    aplicada_en: Optional[str] = None
 
 class BitacoraBatchIn(BaseModel):
     bitacoras: List[BitacoraIn]
@@ -555,8 +557,15 @@ async def _crear_bitacora(payload: BitacoraIn, user_email: str) -> dict:
     doc["costo_total_bitacora"] = round(costo_total, 4)
     doc["guardada_en"] = now_iso()
     doc["creado_por"] = user_email
+    doc["aplicada_en"] = now_iso() if payload.aplicada else None
     await db.bitacoras.insert_one(doc.copy())
-    # Descontar inventario
+    # Solo descontar inventario si la bitácora se marca como aplicada
+    if payload.aplicada:
+        await _descontar_inventario_bitacora(bit_id, aplicaciones, doc["fecha"], user_email)
+    return doc
+
+async def _descontar_inventario_bitacora(bit_id: str, aplicaciones: list, fecha: str, user_email: str):
+    """Crea movimientos de salida y descuenta inventario para todas las aplicaciones de una bitácora."""
     for ap in aplicaciones:
         for p in ap["productos"]:
             inv = await db.inventario.find_one({"producto_id": p["producto_id"]}, {"_id": 0})
@@ -582,10 +591,21 @@ async def _crear_bitacora(payload: BitacoraIn, user_email: str) -> dict:
                 "cantidad": cantidad,
                 "unidad": p["unidad"],
                 "referencia": f"bitacora:{bit_id}",
-                "fecha": doc["fecha"],
+                "fecha": fecha,
                 "usuario": user_email,
             })
-    return doc
+
+async def _revertir_inventario_bitacora(bit_id: str):
+    """Revierte (suma de vuelta) y borra los movimientos asociados a una bitácora."""
+    movs = await db.movimientos.find({"referencia": f"bitacora:{bit_id}"}, {"_id": 0}).to_list(2000)
+    for m in movs:
+        inv = await db.inventario.find_one({"producto_id": m["producto_id"]}, {"_id": 0})
+        if inv:
+            await db.inventario.update_one(
+                {"producto_id": m["producto_id"]},
+                {"$set": {"cantidad": inv["cantidad"] + m["cantidad"], "ultima_actualizacion": now_iso()}},
+            )
+    await db.movimientos.delete_many({"referencia": f"bitacora:{bit_id}"})
 
 @api.get("/bitacoras", response_model=List[BitacoraOut])
 async def list_bitacoras(
@@ -651,21 +671,49 @@ async def delete_bitacora(bit_id: str, _: dict = Depends(require_admin)):
     b = await db.bitacoras.find_one({"id": bit_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Bitácora no encontrada")
-    movs = await db.movimientos.find({"referencia": f"bitacora:{bit_id}"}, {"_id": 0}).to_list(2000)
-    for m in movs:
-        inv = await db.inventario.find_one({"producto_id": m["producto_id"]}, {"_id": 0})
-        if inv:
-            await db.inventario.update_one(
-                {"producto_id": m["producto_id"]},
-                {"$set": {"cantidad": inv["cantidad"] + m["cantidad"], "ultima_actualizacion": now_iso()}},
-            )
-    await db.movimientos.delete_many({"referencia": f"bitacora:{bit_id}"})
+    # Si estaba aplicada, revertir inventario
+    if b.get("aplicada"):
+        await _revertir_inventario_bitacora(bit_id)
     await db.bitacoras.delete_one({"id": bit_id})
     return {"ok": True}
 
+@api.post("/bitacoras/{bit_id}/aplicar")
+async def aplicar_bitacora(bit_id: str, user: dict = Depends(get_current_user)):
+    """Marca una bitácora como aplicada y descuenta el inventario correspondiente."""
+    b = await db.bitacoras.find_one({"id": bit_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Bitácora no encontrada")
+    if b.get("aplicada"):
+        return {"ok": True, "ya_aplicada": True}
+    await _descontar_inventario_bitacora(bit_id, b.get("aplicaciones", []), b.get("fecha", ""), user["email"])
+    await db.bitacoras.update_one(
+        {"id": bit_id},
+        {"$set": {"aplicada": True, "aplicada_en": now_iso(), "aplicada_por": user["email"]}},
+    )
+    return {"ok": True, "aplicada": True}
+
+@api.post("/bitacoras/{bit_id}/desaplicar")
+async def desaplicar_bitacora(bit_id: str, _: dict = Depends(get_current_user)):
+    """Revierte el descuento de inventario de una bitácora aplicada (la regresa a plan)."""
+    b = await db.bitacoras.find_one({"id": bit_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Bitácora no encontrada")
+    if not b.get("aplicada"):
+        return {"ok": True, "ya_no_aplicada": True}
+    await _revertir_inventario_bitacora(bit_id)
+    await db.bitacoras.update_one(
+        {"id": bit_id},
+        {"$set": {"aplicada": False, "aplicada_en": None}},
+    )
+    return {"ok": True, "aplicada": False}
+
 # ---------- Pedidos ----------
 async def _calcular_pedido(fecha_inicio: str, fecha_fin: str, modulo_ids: List[str]):
-    q: dict = {"fecha": {"$gte": fecha_inicio, "$lte": fecha_fin}}
+    # Solo bitácoras del rango que NO estén aplicadas (planes futuros pendientes)
+    q: dict = {
+        "fecha": {"$gte": fecha_inicio, "$lte": fecha_fin},
+        "$or": [{"aplicada": False}, {"aplicada": {"$exists": False}}],
+    }
     if modulo_ids:
         q["modulo_id"] = {"$in": modulo_ids}
     bitacoras = await db.bitacoras.find(q, {"_id": 0}).to_list(5000)
@@ -684,17 +732,25 @@ async def _calcular_pedido(fecha_inicio: str, fecha_fin: str, modulo_ids: List[s
     inventario = {i["producto_id"]: i for i in await db.inventario.find({}, {"_id": 0}).to_list(2000)}
     productos_cat = {p["id"]: p for p in await db.productos.find({}, {"_id": 0}).to_list(2000)}
 
+    # Compras en el rango (informativo): suma cantidad_convertida por producto
+    compras_en_rango: dict = {}
+    compras = await db.compras.find({"fecha": {"$gte": fecha_inicio, "$lte": fecha_fin}}, {"_id": 0}).to_list(5000)
+    for c in compras:
+        for it in c.get("items", []):
+            pid = it.get("producto_id")
+            if not pid:
+                continue
+            cant = it.get("cantidad_convertida", it.get("cantidad", 0)) or 0
+            compras_en_rango[pid] = compras_en_rango.get(pid, 0) + cant
+
     rows = []
     for pid, r in requerido.items():
         inv = inventario.get(pid, {"cantidad": 0, "unidad": r["unidad"]})
         cat = productos_cat.get(pid, {})
         stock = inv.get("cantidad", 0) or 0
         necesito = r["necesito"]
-        # Lógica: si stock >= necesito → a_pedir = 0
-        # Si stock < necesito → a_pedir = necesito - stock (valor absoluto de la resta cuando es negativa)
         a_pedir = max(0, necesito - stock)
         precio = cat.get("precio_unitario", r.get("precio_unitario", 0)) or 0
-        # Unidad base para reportar "a pedir": unidad habitual del producto
         unidad_reporte = cat.get("unidad_habitual", r["unidad"]) or r["unidad"]
         rows.append({
             "producto_id": pid,
@@ -703,6 +759,7 @@ async def _calcular_pedido(fecha_inicio: str, fecha_fin: str, modulo_ids: List[s
             "unidad": unidad_reporte,
             "necesito": round(necesito, 4),
             "tengo": round(stock, 4),
+            "compras_en_rango": round(compras_en_rango.get(pid, 0), 4),
             "diferencia": round(necesito - stock, 4),
             "cantidad_a_pedir": round(a_pedir, 4),
             "precio_unitario": precio,
@@ -963,6 +1020,15 @@ async def startup():
             {"id": "main"},
             {"$set": {"monitor": cfg["jefe_produccion"]}, "$unset": {"jefe_produccion": ""}},
         )
+
+    # Migración: bitácoras sin campo aplicada se marcan como aplicada=True
+    # (ya descontaron del inventario en el modelo anterior)
+    res = await db.bitacoras.update_many(
+        {"aplicada": {"$exists": False}},
+        {"$set": {"aplicada": True, "aplicada_en": now_iso()}},
+    )
+    if res.modified_count:
+        logger.info(f"Migradas {res.modified_count} bitácoras existentes a aplicada=True")
 
 @app.on_event("shutdown")
 async def shutdown():

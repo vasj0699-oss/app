@@ -3,7 +3,7 @@ import AppLayout from "@/components/AppLayout";
 import { api, formatApiError } from "@/lib/api";
 import { fmtMoney } from "@/lib/format";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Trash2, Wallet } from "lucide-react";
+import { ChevronDown, ChevronUp, Trash2, Wallet, CheckCircle2, RotateCcw, Clock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Historial = () => {
@@ -30,8 +30,19 @@ const Historial = () => {
     const limpiar = () => { setFilters({ modulo_id: "", ciclo_numero: "", producto_id: "", fecha_inicio: "", fecha_fin: "", cultivo: "" }); setTimeout(reload, 0); };
 
     const remove = async (id) => {
-        if (!confirm("¿Eliminar bitácora? Se revertirán los movimientos de inventario.")) return;
+        if (!confirm("¿Eliminar bitácora? Si estaba aplicada, se revertirán los movimientos de inventario.")) return;
         try { await api.delete(`/bitacoras/${id}`); toast.success("Bitácora eliminada"); reload(); }
+        catch (e) { toast.error(formatApiError(e)); }
+    };
+
+    const aplicar = async (id) => {
+        try { await api.post(`/bitacoras/${id}/aplicar`); toast.success("Bitácora aplicada e inventario actualizado"); reload(); }
+        catch (e) { toast.error(formatApiError(e)); }
+    };
+
+    const desaplicar = async (id) => {
+        if (!confirm("¿Regresar la bitácora a estado de plan? Se devolverán las cantidades al inventario.")) return;
+        try { await api.post(`/bitacoras/${id}/desaplicar`); toast.success("Bitácora desaplicada — el inventario se restauró"); reload(); }
         catch (e) { toast.error(formatApiError(e)); }
     };
 
@@ -122,6 +133,34 @@ const Historial = () => {
                                             <table className="w-full text-xs">
                                                 <thead className="bg-white text-neutral-500">
                                                     <tr><th className="text-left px-3 py-1.5">Producto</th><th className="text-right px-3 py-1.5">Dosis</th><th className="text-left px-3 py-1.5">Unidad</th><th className="text-right px-3 py-1.5">Cantidad</th>{!hideMoney && <th className="text-right px-3 py-1.5">Costo</th>}</tr>
+                                                </thead>
+                                                <tbody>
+                                                    {ap.productos.map((p, j) => (
+                                                        <tr key={j} className="border-t border-neutral-100">
+                                                            <td className="px-3 py-1.5 font-medium">{p.nombre}</td>
+                                                            <td className="px-3 py-1.5 text-right">{p.dosis}</td>
+                                                            <td className="px-3 py-1.5">{p.unidad}</td>
+                                                            <td className="px-3 py-1.5 text-right">{p.cantidad_usada_total?.toFixed(3)}</td>
+                                                            {!hideMoney && <td className="px-3 py-1.5 text-right font-semibold text-[#4B5828]">{fmtMoney(p.costo_linea)}</td>}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+            <style>{`.ip { width:100%; padding:.4rem .6rem; border:1px solid #e5e7eb; border-radius:10px; font-size:.8rem; background:white; margin-top:2px; } .ip:focus { outline:none; border-color:#8FAD3C; }`}</style>
+        </AppLayout>
+    );
+};
+
+export default Historial;
+text-right px-3 py-1.5">Dosis</th><th className="text-left px-3 py-1.5">Unidad</th><th className="text-right px-3 py-1.5">Cantidad</th>{!hideMoney && <th className="text-right px-3 py-1.5">Costo</th>}</tr>
                                                 </thead>
                                                 <tbody>
                                                     {ap.productos.map((p, j) => (
