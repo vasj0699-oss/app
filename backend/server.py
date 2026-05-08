@@ -693,8 +693,8 @@ async def aplicar_bitacora(bit_id: str, user: dict = Depends(get_current_user)):
     return {"ok": True, "aplicada": True}
 
 @api.post("/bitacoras/{bit_id}/desaplicar")
-async def desaplicar_bitacora(bit_id: str, _: dict = Depends(get_current_user)):
-    """Revierte el descuento de inventario de una bitácora aplicada (la regresa a plan)."""
+async def desaplicar_bitacora(bit_id: str, _: dict = Depends(require_admin)):
+    """Revierte el descuento de inventario de una bitácora aplicada (la regresa a plan). Solo admin."""
     b = await db.bitacoras.find_one({"id": bit_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Bitácora no encontrada")

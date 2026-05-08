@@ -35,12 +35,12 @@ const Historial = () => {
         catch (e) { toast.error(formatApiError(e)); }
     };
 
-    const aplicar = async (id) => {
+    const aplicarBitacora = async (id) => {
         try { await api.post(`/bitacoras/${id}/aplicar`); toast.success("Bitácora aplicada e inventario actualizado"); reload(); }
         catch (e) { toast.error(formatApiError(e)); }
     };
 
-    const desaplicar = async (id) => {
+    const desaplicarBitacora = async (id) => {
         if (!confirm("¿Regresar la bitácora a estado de plan? Se devolverán las cantidades al inventario.")) return;
         try { await api.post(`/bitacoras/${id}/desaplicar`); toast.success("Bitácora desaplicada — el inventario se restauró"); reload(); }
         catch (e) { toast.error(formatApiError(e)); }
@@ -113,12 +113,33 @@ const Historial = () => {
                                 <div className="flex items-center gap-4 text-left">
                                     {open[b.id] ? <ChevronUp className="w-4 h-4 text-[#4B5828]" /> : <ChevronDown className="w-4 h-4 text-[#4B5828]" />}
                                     <div>
-                                        <div className="font-medium text-[#1C1C1A]">{b.fecha} · Módulo {m?.nombre || "?"} · Ciclo {b.ciclo_numero} {ciclo?.cultivo && `(${ciclo.cultivo})`}</div>
+                                        <div className="font-medium text-[#1C1C1A] flex items-center gap-2 flex-wrap">
+                                            <span>{b.fecha} · Módulo {m?.nombre || "?"} · Ciclo {b.ciclo_numero} {ciclo?.cultivo && `(${ciclo.cultivo})`}</span>
+                                            {b.aplicada ? (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700" data-testid={`badge-aplicada-${b.id}`}>
+                                                    <CheckCircle2 className="w-3 h-3" />Aplicada
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700" data-testid={`badge-plan-${b.id}`}>
+                                                    <Clock className="w-3 h-3" />Plan
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-xs text-neutral-500">{b.aplicaciones?.length} aplicaciones · {b.tipo} · {b.asesor}</div>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2">
                                     {!hideMoney && <span className="font-bold text-[#4B5828]">{fmtMoney(b.costo_total_bitacora)}</span>}
+                                    {!b.aplicada && (
+                                        <button onClick={(e) => { e.stopPropagation(); aplicarBitacora(b.id); }} data-testid={`aplicar-${b.id}`} className="px-2.5 py-1 bg-[#4B5828] text-white rounded-[8px] text-xs hover:bg-[#3d4720] flex items-center gap-1">
+                                            <CheckCircle2 className="w-3.5 h-3.5" />Aplicar
+                                        </button>
+                                    )}
+                                    {b.aplicada && isAdmin && (
+                                        <button onClick={(e) => { e.stopPropagation(); desaplicarBitacora(b.id); }} data-testid={`desaplicar-${b.id}`} className="px-2.5 py-1 border border-neutral-300 text-neutral-700 rounded-[8px] text-xs hover:bg-neutral-50 flex items-center gap-1">
+                                            <RotateCcw className="w-3.5 h-3.5" />Desaplicar
+                                        </button>
+                                    )}
                                     {isAdmin && <button onClick={(e) => { e.stopPropagation(); remove(b.id); }} className="text-red-600 p-1 hover:bg-red-50 rounded" data-testid={`del-bitacora-${b.id}`}><Trash2 className="w-4 h-4" /></button>}
                                 </div>
                             </div>
@@ -133,34 +154,6 @@ const Historial = () => {
                                             <table className="w-full text-xs">
                                                 <thead className="bg-white text-neutral-500">
                                                     <tr><th className="text-left px-3 py-1.5">Producto</th><th className="text-right px-3 py-1.5">Dosis</th><th className="text-left px-3 py-1.5">Unidad</th><th className="text-right px-3 py-1.5">Cantidad</th>{!hideMoney && <th className="text-right px-3 py-1.5">Costo</th>}</tr>
-                                                </thead>
-                                                <tbody>
-                                                    {ap.productos.map((p, j) => (
-                                                        <tr key={j} className="border-t border-neutral-100">
-                                                            <td className="px-3 py-1.5 font-medium">{p.nombre}</td>
-                                                            <td className="px-3 py-1.5 text-right">{p.dosis}</td>
-                                                            <td className="px-3 py-1.5">{p.unidad}</td>
-                                                            <td className="px-3 py-1.5 text-right">{p.cantidad_usada_total?.toFixed(3)}</td>
-                                                            {!hideMoney && <td className="px-3 py-1.5 text-right font-semibold text-[#4B5828]">{fmtMoney(p.costo_linea)}</td>}
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
-            <style>{`.ip { width:100%; padding:.4rem .6rem; border:1px solid #e5e7eb; border-radius:10px; font-size:.8rem; background:white; margin-top:2px; } .ip:focus { outline:none; border-color:#8FAD3C; }`}</style>
-        </AppLayout>
-    );
-};
-
-export default Historial;
-text-right px-3 py-1.5">Dosis</th><th className="text-left px-3 py-1.5">Unidad</th><th className="text-right px-3 py-1.5">Cantidad</th>{!hideMoney && <th className="text-right px-3 py-1.5">Costo</th>}</tr>
                                                 </thead>
                                                 <tbody>
                                                     {ap.productos.map((p, j) => (
